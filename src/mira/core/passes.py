@@ -498,9 +498,10 @@ async def self_critique(
 
     keep_indices: set[int] = set()
     verdict_by_idx: dict[int, dict] = {}
-    for v in verdicts:
+    # The schema asks for verdicts in input order; some models then omit `index`.
+    for pos, v in enumerate(verdicts):
         try:
-            idx = int(v.get("index", -1))
+            idx = int(v.get("index", pos))
         except (TypeError, ValueError):
             continue
         if not 0 <= idx < len(comments):
