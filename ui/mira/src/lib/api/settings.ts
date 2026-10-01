@@ -1,6 +1,16 @@
 import { deleteJson, fetchJson, postJson, putJson } from "./http"
 
-export type LlmAccount = { id: string; email: string; active: boolean }
+export type LlmAccount = {
+  id: string
+  email: string
+  active: boolean
+  rate_limited: boolean
+}
+export type UsageWindow = {
+  label: string
+  percent: number
+  resets_at: string | null
+}
 export type LlmAccountProvider = "chatgpt" | "anthropic"
 export type LlmAccounts = {
   accounts: Record<LlmAccountProvider, LlmAccount[]>
@@ -9,6 +19,10 @@ export type LlmAccounts = {
 // Model selection, cost estimate, and admin review-config overrides.
 export const settingsApi = {
   getLlmAccounts: () => fetchJson<LlmAccounts>("/api/llm-accounts"),
+  getLlmUsage: () =>
+    fetchJson<{
+      usage: Record<LlmAccountProvider, Record<string, UsageWindow[]>>
+    }>("/api/llm-accounts/usage"),
   startLlmLogin: (provider: LlmAccountProvider) =>
     postJson<{ login_id: string; url: string; code?: string }>(
       `/api/llm-accounts/${provider}/login`,
@@ -71,6 +85,7 @@ export const settingsApi = {
       indexing_fallbacks: string[]
       review_fallbacks: string[]
       security_fallbacks: string[]
+      missing_api_key: string
     }>("/api/settings/models"),
 
   saveModels: (

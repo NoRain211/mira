@@ -125,7 +125,7 @@ LLM_ERROR_MESSAGES: dict[str, ErrorMessage] = {
     ),
     # Subscription OAuth (ChatGPT / Claude) errors
     "oauth_not_signed_in": ErrorMessage(
-        full="Not signed in to {provider}. Add an account in Settings → Models → Add provider.",
+        full="Not signed in to {provider}. Add an account in Settings → Providers.",
         safe="Not signed in to {provider}",
     ),
     "oauth_failed": ErrorMessage(

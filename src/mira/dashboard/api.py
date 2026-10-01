@@ -380,6 +380,8 @@ class ModelsResponse(BaseModel):
     indexing_fallbacks: list[str] = []
     review_fallbacks: list[str] = []
     security_fallbacks: list[str] = []
+    # Env var the API endpoint needs but isn't set ("" when ready); its models are then hidden.
+    missing_api_key: str = ""
 
 
 class ModelsUpdate(BaseModel):

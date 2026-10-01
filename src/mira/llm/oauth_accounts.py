@@ -17,6 +17,7 @@ import os
 import secrets
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -48,6 +49,7 @@ CHATGPT_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/toke
 CHATGPT_DEVICE_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
 CHATGPT_VERIFICATION_URL = "https://auth.openai.com/codex/device"
 CHATGPT_API = "https://chatgpt.com/backend-api/codex"
+CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_CLIENT_VERSION = "0.155.0"
 
 _DEVICE_TTL = 15 * 60
@@ -66,21 +68,50 @@ def _store_path() -> Path:
     return Path(os.environ.get("MIRA_INDEX_DIR", "./data/indexes")) / "_llm_auth" / "accounts.json"
 
 
+def _fernet():  # type: ignore[no-untyped-def]
+    """Cipher for accounts.json when MIRA_SECRET_KEY is set; None stores plain JSON."""
+    secret = os.environ.get("MIRA_SECRET_KEY")
+    if not secret:
+        return None
+    from cryptography.fernet import Fernet
+
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
+
+
 def _load() -> dict[str, list[dict]]:
     try:
-        data = json.loads(_store_path().read_text(encoding="utf-8"))
+        raw = _store_path().read_bytes()
     except FileNotFoundError:
-        data = {}
+        raw = b"{}"
+    # Plain JSON files (written before MIRA_SECRET_KEY was set) still load; the next save encrypts.
+    if not raw.lstrip().startswith(b"{"):
+        from cryptography.fernet import InvalidToken
+
+        fernet = _fernet()
+        try:
+            if fernet is None:
+                raise InvalidToken
+            raw = fernet.decrypt(raw)
+        except InvalidToken:
+            raise LLMError(
+                "oauth_failed",
+                provider="Subscription",
+                detail="stored accounts are encrypted with a different MIRA_SECRET_KEY",
+            ) from None
+    data = json.loads(raw)
     return {p: list(data.get(p, [])) for p in PROVIDERS}
 
 
 def _save(data: dict[str, list[dict]]) -> None:
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = json.dumps(data).encode()
+    if fernet := _fernet():
+        payload = fernet.encrypt(payload)
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+    with os.fdopen(fd, "wb") as f:
+        f.write(payload)
     os.replace(tmp, path)
 
 
@@ -98,10 +129,16 @@ def mask_email(email: str | None) -> str:
 def public_accounts() -> dict[str, list[dict]]:
     """Account list safe to return to the browser (no tokens, masked emails)."""
     out = {}
+    now = time.time()
     for provider, accounts in _load().items():
         active = _active(accounts)
         out[provider] = [
-            {"id": a["id"], "email": mask_email(a.get("email")), "active": a is active}
+            {
+                "id": a["id"],
+                "email": mask_email(a.get("email")),
+                "active": a is active,
+                "rate_limited": _rate_limited_until.get(a["id"], 0) > now,
+            }
             for a in accounts
         ]
     return out
@@ -111,8 +148,13 @@ def has_account(provider: str) -> bool:
     return bool(_load()[provider])
 
 
+def is_quota_error(resp: httpx.Response) -> bool:
+    # The Codex backend reports an exhausted window as 502 usage_limit_reached, not only 429.
+    return resp.status_code == 429 or "usage_limit" in resp.text
+
+
 def mark_rate_limited(account: dict, resp: httpx.Response) -> None:
-    """Park a 429'd account so the next attempt uses another signed-in account."""
+    """Park a quota-limited account so the next attempt uses another signed-in account."""
     try:
         wait = float(resp.headers.get("retry-after", ""))
     except ValueError:
@@ -224,19 +266,29 @@ async def _refresh(provider: str, account: dict) -> dict:
     return fresh
 
 
-async def access_token(provider: str) -> dict:
-    """Return the active account, or the next one if it is rate limited, with a fresh token."""
+async def access_token(provider: str, account_id: str | None = None) -> dict:
+    """Return an account with a fresh token: account_id if given, else the active account
+    (or the next signed-in one while the active account is rate limited)."""
     async with _lock:
         data = _load()
         active = _active(data[provider])
         if active is None:
             name = "Claude" if provider == "anthropic" else "ChatGPT"
             raise NonRetriableLLMError("oauth_not_signed_in", provider=name)
-        now = time.time()
-        account = next(
-            (a for a in [active, *data[provider]] if _rate_limited_until.get(a["id"], 0) <= now),
-            active,
-        )
+        if account_id:
+            account = next((a for a in data[provider] if a["id"] == account_id), None)
+            if account is None:
+                raise KeyError(account_id)
+        else:
+            now = time.time()
+            account = next(
+                (
+                    a
+                    for a in [active, *data[provider]]
+                    if _rate_limited_until.get(a["id"], 0) <= now
+                ),
+                active,
+            )
         if account.get("expires", 0) < time.time() + 60:
             account.update(await _refresh(provider, account))
             _save(data)
@@ -308,6 +360,59 @@ def login_status(login_id: str) -> dict:
     if login is None:
         return {"status": "unknown"}
     return {"status": login["status"], "error": login.get("error")}
+
+
+async def usage() -> dict[str, dict[str, list[dict]]]:
+    """Subscription usage windows per provider and account id:
+    [{label, percent (0-100), resets_at (ISO 8601)}]. An account that can't be read gets []."""
+    out: dict[str, dict[str, list[dict]]] = {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        for provider, accounts in _load().items():
+            out[provider] = {}
+            for a in accounts:
+                try:
+                    out[provider][a["id"]] = await _usage_windows(
+                        client, provider, await access_token(provider, a["id"])
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Usage read failed for %s account %s: %s", provider, a["id"], exc
+                    )
+                    out[provider][a["id"]] = []
+    return out
+
+
+async def _usage_windows(client: httpx.AsyncClient, provider: str, account: dict) -> list[dict]:
+    if provider == "anthropic":
+        resp = await client.get(
+            f"{ANTHROPIC_API}/api/oauth/usage", headers=anthropic_headers(account["access"])
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        buckets = [("5-hour", body.get("five_hour")), ("Weekly", body.get("seven_day"))]
+        return [
+            {"label": label, "percent": float(b["utilization"]), "resets_at": b.get("resets_at")}
+            for label, b in buckets
+            if b and b.get("utilization") is not None
+        ]
+    resp = await client.get(CHATGPT_USAGE_URL, headers=chatgpt_headers(account))
+    resp.raise_for_status()
+    limits = resp.json().get("rate_limit") or {}
+    windows = []
+    for w in (limits.get("primary_window"), limits.get("secondary_window")):
+        if not w or w.get("used_percent") is None:
+            continue
+        seconds = w.get("limit_window_seconds") or 0
+        label = {18_000: "5-hour", 604_800: "Weekly"}.get(seconds, f"{round(seconds / 3600)}-hour")
+        reset = w.get("reset_at")
+        windows.append(
+            {
+                "label": label,
+                "percent": float(w["used_percent"]),
+                "resets_at": datetime.fromtimestamp(reset, UTC).isoformat() if reset else None,
+            }
+        )
+    return windows
 
 
 async def start_chatgpt_login() -> dict:

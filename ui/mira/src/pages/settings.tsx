@@ -80,6 +80,7 @@ export function SettingsPage() {
   const [configReviewModel, setConfigReviewModel] = useState("")
   const [configSecurityModel, setConfigSecurityModel] = useState("")
   const [backend, setBackend] = useState("")
+  const [missingApiKey, setMissingApiKey] = useState("")
   const [indexingOptions, setIndexingOptions] = useState<ModelOption[]>([])
   const [reviewOptions, setReviewOptions] = useState<ModelOption[]>([])
   const [securityOptions, setSecurityOptions] = useState<ModelOption[]>([])
@@ -124,6 +125,7 @@ export function SettingsPage() {
       setConfigReviewModel(m.config_review_model)
       setConfigSecurityModel(m.config_security_model)
       setBackend(m.backend)
+      setMissingApiKey(m.missing_api_key ?? "")
       setIndexingOptions(m.indexing_options)
       setReviewOptions(m.review_options)
       setSecurityOptions(m.security_options)
@@ -395,6 +397,7 @@ export function SettingsPage() {
             <CardDescription>
               Choose models for indexing and PR reviews
               {backend &&
+                !missingApiKey &&
                 ` — listed from ${
                   {
                     openrouter: "OpenRouter",
@@ -404,6 +407,13 @@ export function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {missingApiKey && (
+              <p className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                Only subscription models are listed. Set the{" "}
+                <code className="font-mono">{missingApiKey}</code> environment
+                variable to also use API models.
+              </p>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">Indexing Model</label>
               <ModelCombobox
