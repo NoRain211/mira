@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from mira.exceptions import LLMError
+from mira.exceptions import LLMError, NonRetriableLLMError
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,8 @@ _DEVICE_TTL = 15 * 60
 _lock = asyncio.Lock()
 _logins: dict[str, dict[str, Any]] = {}
 _callback_server: asyncio.Server | None = None
+# Account id -> time until which it is skipped after a 429 (in memory only).
+_rate_limited_until: dict[str, float] = {}
 
 
 # ── Storage ──────────────────────────────────────────────────────────
@@ -107,6 +109,15 @@ def public_accounts() -> dict[str, list[dict]]:
 
 def has_account(provider: str) -> bool:
     return bool(_load()[provider])
+
+
+def mark_rate_limited(account: dict, resp: httpx.Response) -> None:
+    """Park a 429'd account so the next attempt uses another signed-in account."""
+    try:
+        wait = float(resp.headers.get("retry-after", ""))
+    except ValueError:
+        wait = 300
+    _rate_limited_until[account["id"]] = time.time() + wait
 
 
 async def _add_account(provider: str, creds: dict) -> None:
@@ -214,13 +225,18 @@ async def _refresh(provider: str, account: dict) -> dict:
 
 
 async def access_token(provider: str) -> dict:
-    """Return the active account (with a fresh access token), refreshing and persisting if needed."""
+    """Return the active account, or the next one if it is rate limited, with a fresh token."""
     async with _lock:
         data = _load()
-        account = _active(data[provider])
-        if account is None:
+        active = _active(data[provider])
+        if active is None:
             name = "Claude" if provider == "anthropic" else "ChatGPT"
-            raise LLMError("oauth_not_signed_in", provider=name)
+            raise NonRetriableLLMError("oauth_not_signed_in", provider=name)
+        now = time.time()
+        account = next(
+            (a for a in [active, *data[provider]] if _rate_limited_until.get(a["id"], 0) <= now),
+            active,
+        )
         if account.get("expires", 0) < time.time() + 60:
             account.update(await _refresh(provider, account))
             _save(data)

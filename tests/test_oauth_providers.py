@@ -46,7 +46,7 @@ async def _add(provider: str, **creds) -> None:
 
 
 def test_model_prefix_routes_to_subscription_regardless_of_provider():
-    claude = create_llm(LLMConfig(model="claude/claude-sonnet-x", fallback_model="openai/gpt-5"))
+    claude = create_llm(LLMConfig(model="claude/claude-sonnet-x"))
     chatgpt = create_llm(LLMConfig(provider="bedrock", model="chatgpt/gpt-6-sol"))
     assert isinstance(claude, AnthropicOAuthProvider)
     assert (claude.config.model, claude.config.fallback_model) == ("claude-sonnet-x", None)
@@ -235,3 +235,72 @@ async def test_chatgpt_streams_and_moves_system_to_instructions(monkeypatch):
 async def test_not_signed_in_raises():
     with pytest.raises(Exception, match="Not signed in to Claude"):
         await oauth_accounts.access_token("anthropic")
+
+
+_CLAUDE_OK = {"content": [{"type": "text", "text": '{"ok": 1}'}], "usage": {}}
+
+
+async def test_claude_drops_temperature_when_model_rejects_it(monkeypatch):
+    await _add("anthropic")
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        if "temperature" in json.loads(r.content):
+            return httpx.Response(400, text="`temperature` is deprecated for this model.")
+        return httpx.Response(200, json=_CLAUDE_OK)
+
+    seen = _route(monkeypatch, handler)
+    provider = AnthropicOAuthProvider(LLMConfig(model="claude-new"))
+
+    assert await provider.complete([{"role": "user", "content": "u"}]) == '{"ok": 1}'
+    assert await provider.complete([{"role": "user", "content": "u"}]) == '{"ok": 1}'
+    assert len(seen) == 3  # the second call already omits temperature
+
+
+async def test_rate_limited_account_rotates_to_next(monkeypatch):
+    oauth_accounts._rate_limited_until.clear()
+    await _add("anthropic", email="a@x.com", access="tok-a")
+    await _add("anthropic", email="b@x.com", access="tok-b")  # active
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        if r.headers["authorization"] == "Bearer tok-b":
+            return httpx.Response(429, headers={"retry-after": "600"}, text="limit")
+        return httpx.Response(200, json=_CLAUDE_OK)
+
+    seen = _route(monkeypatch, handler)
+    provider = AnthropicOAuthProvider(
+        LLMConfig(model="claude-x", retry_min_wait=0, retry_max_wait=0)
+    )
+
+    assert await provider.complete([{"role": "user", "content": "u"}]) == '{"ok": 1}'
+    assert [r.headers["authorization"] for r in seen] == ["Bearer tok-b", "Bearer tok-a"]
+
+
+async def test_model_chain_falls_through_providers_and_cools_failed_model(monkeypatch):
+    from mira import llm
+
+    llm._cooling_until.clear()
+    oauth_accounts._rate_limited_until.clear()
+    await _add("anthropic")
+    await _add("chatgpt")
+    text_part = {"type": "output_text", "text": '{"from": "gpt"}'}
+    message = {"type": "message", "role": "assistant", "content": [text_part]}
+    done = {"type": "response.completed", "response": {"output": [message]}}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        if "anthropic" in r.url.host:
+            return httpx.Response(429, text="limit")
+        return httpx.Response(200, text="data: " + json.dumps(done) + "\n")
+
+    seen = _route(monkeypatch, handler)
+    chain = create_llm(
+        LLMConfig(
+            model="claude/claude-x",
+            fallback_models=["chatgpt/gpt-x"],
+            max_retries=1,
+        )
+    )
+
+    assert json.loads(await chain.complete([{"role": "user", "content": "u"}])) == {"from": "gpt"}
+    assert json.loads(await chain.complete([{"role": "user", "content": "u"}])) == {"from": "gpt"}
+    # The second call skips Claude while it cools down.
+    assert [r.url.host for r in seen] == ["api.anthropic.com", "chatgpt.com", "chatgpt.com"]

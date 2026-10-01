@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 _TOOL_PREFIX = "custom_"
 _JSON_ONLY = "Respond with only one valid JSON object. No markdown fences or explanatory text."
+# Models that rejected `temperature` (newer Claude models deprecate it); learned per process.
+_NO_TEMPERATURE: set[str] = set()
 
 
 def _wire_name(name: str) -> str:
@@ -122,6 +124,8 @@ class AnthropicOAuthProvider:
         return len(text) // 4
 
     async def _send(self, messages: list, *, extra_system: str = "", **body: object) -> dict:
+        if self.config.model in _NO_TEMPERATURE:
+            body.pop("temperature", None)
         account = await oauth_accounts.access_token("anthropic")
         system_text, wire_messages = _to_anthropic(messages)
         system = [{"type": "text", "text": oauth_accounts.CLAUDE_CODE_IDENTITY}]
@@ -142,6 +146,11 @@ class AnthropicOAuthProvider:
                 json=payload,
             )
         if resp.status_code != 200:
+            if resp.status_code == 400 and "temperature" in body and "temperature" in resp.text:
+                _NO_TEMPERATURE.add(self.config.model)
+                return await self._send(messages, extra_system=extra_system, **body)
+            if resp.status_code == 429:
+                oauth_accounts.mark_rate_limited(account, resp)
             error = (
                 NonRetriableLLMError
                 if 400 <= resp.status_code < 500 and resp.status_code != 429

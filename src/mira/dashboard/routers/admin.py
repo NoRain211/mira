@@ -165,6 +165,7 @@ async def get_models() -> ModelsResponse:
         get_review_model,
         get_review_thinking_mode,
         get_security_model,
+        parse_fallbacks,
         resolve_api_style,
     )
 
@@ -205,6 +206,12 @@ async def get_models() -> ModelsResponse:
         thinking_options=[ModelOption(**m) for m in THINKING_MODES],
         api_style=api_style,
         api_style_options=[ModelOption(**m) for m in API_STYLES],
+        **{
+            f"{tier}_fallbacks": parse_fallbacks(
+                _api._app_db.get_setting(f"{tier}_fallback_models")
+            )
+            for tier in ("indexing", "review", "security")
+        },
     )
 
 
@@ -290,6 +297,11 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
     _api._app_db.set_setting("indexing_model", body.indexing_model.strip())
     _api._app_db.set_setting("review_model", body.review_model.strip())
     _api._app_db.set_setting("security_model", body.security_model.strip())
+    for tier in ("indexing", "review", "security"):
+        fallbacks = getattr(body, f"{tier}_fallbacks")
+        if fallbacks is not None:
+            ids = dict.fromkeys(m.strip() for m in fallbacks if m.strip() and "," not in m)
+            _api._app_db.set_setting(f"{tier}_fallback_models", ",".join(ids))
     # Clear "off" to "" rather than persisting the literal — "off" is the
     # default, and a stored value would shadow a mira.yaml
     # `review_reasoning_effort` override. "" (not None — the column is NOT NULL)

@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
@@ -25,6 +25,48 @@ import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { useDocumentTitle } from "@/lib/hooks"
 
+// Ordered models tried when the one above fails (quota, outage); mixes providers freely.
+function FallbackList({
+  value,
+  onChange,
+  options,
+  emptyHint,
+}: {
+  value: string[]
+  onChange: (v: string[]) => void
+  options: ModelOption[]
+  emptyHint?: string
+}) {
+  const label = (id: string) => options.find((o) => o.value === id)?.label ?? id
+  return (
+    <div className="space-y-1.5 border-l pl-3">
+      <p className="text-xs text-muted-foreground">
+        Fallbacks, tried in order when the model above fails.
+        {value.length === 0 && emptyHint ? ` ${emptyHint}` : ""}
+      </p>
+      {value.map((id, i) => (
+        <div key={id} className="flex items-center gap-2 text-sm">
+          <span className="w-4 text-xs text-muted-foreground">{i + 1}.</span>
+          <span className="flex-1 truncate">{label(id)}</span>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Remove fallback ${label(id)}`}
+            onClick={() => onChange(value.filter((m) => m !== id))}
+          >
+            <X />
+          </Button>
+        </div>
+      ))}
+      <ModelCombobox
+        value=""
+        onChange={(id) => id && !value.includes(id) && onChange([...value, id])}
+        options={options}
+      />
+    </div>
+  )
+}
+
 export function SettingsPage() {
   useDocumentTitle("Settings")
   const { user: currentUser } = useAuth()
@@ -41,6 +83,11 @@ export function SettingsPage() {
   const [indexingOptions, setIndexingOptions] = useState<ModelOption[]>([])
   const [reviewOptions, setReviewOptions] = useState<ModelOption[]>([])
   const [securityOptions, setSecurityOptions] = useState<ModelOption[]>([])
+  const [fallbacks, setFallbacks] = useState({
+    indexing_fallbacks: [] as string[],
+    review_fallbacks: [] as string[],
+    security_fallbacks: [] as string[],
+  })
   const [thinkingMode, setThinkingMode] = useState("off")
   const [thinkingOptions, setThinkingOptions] = useState<ModelOption[]>([])
   const [apiStyle, setApiStyle] = useState("chat")
@@ -84,6 +131,11 @@ export function SettingsPage() {
       setThinkingOptions(m.thinking_options)
       setApiStyle(m.api_style ?? "chat")
       setApiStyleOptions(m.api_style_options ?? [])
+      setFallbacks({
+        indexing_fallbacks: m.indexing_fallbacks ?? [],
+        review_fallbacks: m.review_fallbacks ?? [],
+        security_fallbacks: m.security_fallbacks ?? [],
+      })
     })
 
   useEffect(() => {
@@ -118,7 +170,8 @@ export function SettingsPage() {
       reviewModel,
       securityModel,
       thinkingMode,
-      apiStyle
+      apiStyle,
+      fallbacks
     )
     setSavingModels(false)
     setModelsSaved(true)
@@ -359,6 +412,13 @@ export function SettingsPage() {
                 options={indexingOptions}
                 configModel={configIndexingModel}
               />
+              <FallbackList
+                value={fallbacks.indexing_fallbacks}
+                onChange={(v) =>
+                  setFallbacks((f) => ({ ...f, indexing_fallbacks: v }))
+                }
+                options={indexingOptions}
+              />
               <p className="text-xs text-muted-foreground">
                 Used to summarize files when building the code index. A cheaper
                 model is recommended since it runs over every file.
@@ -372,6 +432,13 @@ export function SettingsPage() {
                 options={reviewOptions}
                 configModel={configReviewModel}
               />
+              <FallbackList
+                value={fallbacks.review_fallbacks}
+                onChange={(v) =>
+                  setFallbacks((f) => ({ ...f, review_fallbacks: v }))
+                }
+                options={reviewOptions}
+              />
               <p className="text-xs text-muted-foreground">
                 Used to analyze PRs and post review comments. A more powerful
                 model gives better review quality.
@@ -384,6 +451,14 @@ export function SettingsPage() {
                 onChange={setSecurityModel}
                 options={securityOptions}
                 configModel={configSecurityModel}
+              />
+              <FallbackList
+                value={fallbacks.security_fallbacks}
+                onChange={(v) =>
+                  setFallbacks((f) => ({ ...f, security_fallbacks: v }))
+                }
+                options={securityOptions}
+                emptyHint="Uses the review fallbacks when empty."
               />
               <p className="text-xs text-muted-foreground">
                 Used for the dedicated security pass. Defaults to the review
