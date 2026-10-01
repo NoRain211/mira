@@ -145,10 +145,14 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
     db_thinking: str | None = None
     db_review: str | None = None
     db_style: str | None = None
+    db_fallbacks: str | None = None
     try:
         from mira.dashboard.api import _app_db
 
         if _app_db is not None:
+            db_fallbacks = _app_db.get_setting(f"{purpose}_fallback_models")
+            if purpose == "security" and not db_fallbacks:
+                db_fallbacks = _app_db.get_setting("review_fallback_models")
             if purpose == "indexing":
                 db_model = _app_db.get_setting("indexing_model")
             elif purpose == "review":
@@ -181,6 +185,16 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
 
     source = "dashboard setting" if db_model else ("mira.yaml" if config_model else "default")
     logger.info("%s model: %s (source: %s)", purpose.capitalize(), resolved, source)
-    return base.model_copy(
-        update={"model": resolved, "reasoning_effort": thinking_mode, "api_style": resolved_style}
-    )
+    update: dict = {
+        "model": resolved,
+        "reasoning_effort": thinking_mode,
+        "api_style": resolved_style,
+    }
+    if db_fallbacks:
+        update["fallback_models"] = parse_fallbacks(db_fallbacks)
+    return base.model_copy(update=update)
+
+
+def parse_fallbacks(value: str | None) -> list[str]:
+    """Comma-separated fallback ids as stored in the settings table."""
+    return [m.strip() for m in (value or "").split(",") if m.strip()]

@@ -37,6 +37,9 @@ def _is_local_host(host: str) -> bool:
 class LLMConfig(BaseModel):
     model: str = "anthropic/claude-sonnet-4-6"
     fallback_model: str | None = None
+    # Ordered models to try when the primary fails (quota, outage). Each id may use a
+    # different provider, e.g. ["chatgpt/gpt-5.5", "anthropic/claude-sonnet-4-6"].
+    fallback_models: list[str] = Field(default_factory=list)
     # Optional per-purpose overrides. Fall back to `model` if not set.
     indexing_model: str | None = None
     review_model: str | None = None

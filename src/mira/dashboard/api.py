@@ -376,6 +376,10 @@ class ModelsResponse(BaseModel):
     # resolved DB → config → default. Mirrors review_thinking_mode.
     api_style: str
     api_style_options: list[ModelOption]
+    # Ordered fallback model ids per tier (dashboard setting; security inherits review's).
+    indexing_fallbacks: list[str] = []
+    review_fallbacks: list[str] = []
+    security_fallbacks: list[str] = []
 
 
 class ModelsUpdate(BaseModel):
@@ -384,6 +388,10 @@ class ModelsUpdate(BaseModel):
     security_model: str = ""
     review_thinking_mode: str = "off"
     api_style: str = "chat"
+    # None leaves the stored list untouched (the setup page saves models without them).
+    indexing_fallbacks: list[str] | None = None
+    review_fallbacks: list[str] | None = None
+    security_fallbacks: list[str] | None = None
 
 
 class GlobalSettingsResponse(BaseModel):
