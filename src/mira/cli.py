@@ -142,7 +142,7 @@ def main() -> None:
 @click.option(
     "--trust-execution-settings",
     is_flag=True,
-    help="Operator-only: allow --config to set Codex/Claude command, auth home, sandbox, and timeout",
+    help="Operator-only: allow --config to set Codex command, auth home, sandbox, and timeout",
 )
 @click.option(
     "--no-walkthrough",

@@ -27,8 +27,6 @@ _CATALOG_TTL = 3600.0
 _FAILURE_TTL = 60.0
 _cache: dict[str, tuple[float, list[dict] | None]] = {}
 _locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-# Backends that serve only their own registry entries, never OpenRouter ids.
-_ISOLATED_BACKENDS = {"bedrock", "codex-cli", "claude-cli"}
 
 
 def active_backend(config: LLMConfig) -> str:
@@ -37,8 +35,6 @@ def active_backend(config: LLMConfig) -> str:
         return "bedrock"
     if config.provider in {"codex-cli", "codex_cli", "codex"}:
         return "codex-cli"
-    if config.provider in {"claude-cli", "claude_cli", "claude-code"}:
-        return "claude-cli"
     profile = profiles.resolve(config.base_url)
     return "openrouter" if profile.get("name") == "openrouter" else "openai-compatible"
 
@@ -105,7 +101,7 @@ async def fetch_catalog(config: LLMConfig) -> list[dict] | None:
     backend = active_backend(config)
     if backend == "bedrock":
         cache_key = f"bedrock:{config.region}:{config.aws_profile or ''}"
-    elif backend in {"codex-cli", "claude-cli"}:
+    elif backend == "codex-cli":
         return None
     else:
         cache_key = config.base_url
@@ -154,9 +150,9 @@ def build_options(backend: str, dynamic: list[dict] | None, purpose: str) -> lis
         provider = info.get("provider")
         if backend == "bedrock" and provider != "bedrock":
             continue
-        if backend in {"codex-cli", "claude-cli"} and provider != backend:
+        if backend == "codex-cli" and provider != "codex-cli":
             continue
-        if backend not in _ISOLATED_BACKENDS and provider in _ISOLATED_BACKENDS:
+        if backend not in {"bedrock", "codex-cli"} and provider in {"bedrock", "codex-cli"}:
             continue
         if purpose not in (info.get("purposes") or []):
             continue
@@ -172,3 +168,30 @@ def build_options(backend: str, dynamic: list[dict] | None, purpose: str) -> lis
         options += [{**d, "recommended": False} for d in dynamic if _norm(d["value"]) not in seen]
     options.sort(key=lambda m: (not m["recommended"], m["label"].lower()))
     return options
+
+
+_SUBSCRIPTIONS = {"chatgpt": ("chatgpt/", "ChatGPT"), "anthropic": ("claude/", "Claude")}
+
+
+async def subscription_options() -> list[dict]:
+    """Models from every signed-in subscription account, prefixed so create_llm routes them."""
+    from mira.llm import oauth_accounts
+
+    out: list[dict] = []
+    for account, (prefix, name) in _SUBSCRIPTIONS.items():
+        if not oauth_accounts.has_account(account):
+            continue
+        hit = _cache.get(account)
+        ttl = _CATALOG_TTL if hit and hit[1] is not None else _FAILURE_TTL
+        if hit is None or time.time() - hit[0] >= ttl:
+            try:
+                models: list[dict] | None = await oauth_accounts.list_models(account)
+            except Exception as exc:
+                logger.warning("%s model list failed: %s", name, exc)
+                models = None
+            hit = _cache[account] = (time.time(), models)
+        out += [
+            {"value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
+            for m in hit[1] or []
+        ]
+    return out

@@ -14,10 +14,6 @@ from mira.llm import registry
 
 logger = logging.getLogger(__name__)
 
-MODEL_PRICING: dict[str, tuple[float, float]] = {
-    model_id: registry.pricing(model_id) for model_id in registry.all_models()
-}
-
 # Thinking-mode options for the review model. "off" disables extended thinking
 # (today's behavior); low/medium/high/xhigh map to the provider's unified
 # ``reasoning.effort``; "max" is a top level remapped per provider (OpenRouter
@@ -62,7 +58,7 @@ def estimate_indexing_cost(file_count: int, model: str) -> dict:
     if file_count == 0:
         return {"estimated_usd": 0.0, "input_tokens": 0, "output_tokens": 0}
 
-    input_price, output_price = MODEL_PRICING.get(model, (3.00, 15.00))
+    input_price, output_price = registry.pricing(model)
 
     # File summarization batches
     batches = (file_count + 4) // 5  # ceil div

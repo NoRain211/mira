@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
-import { LlmProviderCard } from "@/components/llm-provider-card"
+import { ProvidersPanel } from "@/components/providers-panel"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -333,7 +333,7 @@ export function SettingsPage() {
         </p>
       </div>
 
-      {section === "models" && <LlmProviderCard onChanged={loadModels} />}
+      {section === "providers" && <ProvidersPanel />}
 
       {section === "models" && (
         <Card>
@@ -346,10 +346,8 @@ export function SettingsPage() {
                   {
                     openrouter: "OpenRouter",
                     bedrock: "AWS Bedrock",
-                    "codex-cli": "your ChatGPT subscription",
-                    "claude-cli": "your Claude subscription",
                   }[backend] ?? "your configured endpoint"
-                }`}
+                } plus any subscriptions signed in under Providers`}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
