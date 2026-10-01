@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
-import type { LlmAccountProvider, LlmAccounts } from "@/lib/api/settings"
+import type {
+  LlmAccountProvider,
+  LlmAccounts,
+  UsageWindow,
+} from "@/lib/api/settings"
 
 const ROWS: { key: LlmAccountProvider; name: string; icon: string }[] = [
   {
@@ -28,6 +32,58 @@ const ROWS: { key: LlmAccountProvider; name: string; icon: string }[] = [
 
 type Login = { loginId: string; url: string; code?: string; error?: string }
 
+type Usage = Partial<
+  Record<LlmAccountProvider, Record<string, UsageWindow[] | undefined>>
+>
+
+// Claude redirects to localhost:54545, which only reaches Mira when both run on this machine.
+const REMOTE = !["localhost", "127.0.0.1", "[::1]"].includes(
+  window.location.hostname
+)
+
+function UsageBars({ windows }: { windows?: UsageWindow[] }) {
+  if (!windows?.length) return null
+  return (
+    <div className="mt-2 space-y-1.5">
+      {windows.map((w) => (
+        <div key={w.label} className="flex items-center gap-2 text-xs">
+          <span className="w-14 text-muted-foreground">{w.label}</span>
+          <div
+            className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label={`${w.label} usage`}
+            aria-valuenow={Math.round(w.percent)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className={`h-full ${w.percent >= 90 ? "bg-destructive" : "bg-primary"}`}
+              style={{ width: `${Math.min(w.percent, 100)}%` }}
+            />
+          </div>
+          <span className="w-10 text-right tabular-nums">
+            {Math.round(w.percent)}%
+          </span>
+          {w.resets_at && (
+            <span className="text-muted-foreground">
+              resets{" "}
+              {new Date(w.resets_at).toLocaleString(undefined, {
+                weekday: "short",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RateLimited() {
+  return <span className="ml-2 text-xs text-destructive">Rate limited</span>
+}
+
 function errorText(e: unknown) {
   const msg = e instanceof Error ? e.message : String(e)
   const m = msg.match(/"detail":\s*"([^"]+)"/)
@@ -36,13 +92,22 @@ function errorText(e: unknown) {
 
 export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
   const [accounts, setAccounts] = useState<LlmAccounts | null>(null)
+  const [usage, setUsage] = useState<Usage>({})
+  const loadUsage = useCallback(() => {
+    api
+      .getLlmUsage()
+      .then((r) => setUsage(r.usage))
+      .catch(() => setUsage({}))
+  }, [])
   const refresh = useCallback(() => {
     api.getLlmAccounts().then(setAccounts)
+    loadUsage()
     onChanged?.()
-  }, [onChanged])
+  }, [onChanged, loadUsage])
   useEffect(() => {
     api.getLlmAccounts().then(setAccounts)
-  }, [])
+    loadUsage()
+  }, [loadUsage])
   const [search, setSearch] = useState("")
   const [manage, setManage] = useState<LlmAccountProvider | null>(null)
   const [logins, setLogins] = useState<
@@ -136,6 +201,7 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
                     <div className="text-sm font-medium">{row.name}</div>
                     <div className="truncate text-xs text-muted-foreground">
                       {active ? active.email || "Signed in" : "Not logged in"}
+                      {active?.rate_limited && <RateLimited />}
                     </div>
                   </div>
                   {list.length ? (
@@ -178,13 +244,14 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
                     </Button>
                   )}
                 </div>
+                {active && <UsageBars windows={usage[row.key]?.[active.id]} />}
 
                 {manage === row.key && list.length > 0 && (
                   <ul className="mt-3 space-y-1 border-t pt-3">
                     {list.map((a) => (
                       <li
                         key={a.id}
-                        className="flex items-center gap-2 text-sm"
+                        className="flex flex-wrap items-center gap-2 text-sm"
                       >
                         <span className="flex-1 truncate">
                           {a.email || a.id}
@@ -193,6 +260,14 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
                               In use
                             </span>
                           )}
+                          {a.rate_limited && <RateLimited />}
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {(usage[row.key]?.[a.id] ?? [])
+                              .map(
+                                (w) => `${w.label} ${Math.round(w.percent)}%`
+                              )
+                              .join(" · ")}
+                          </span>
                         </span>
                         {!a.active && (
                           <Button
@@ -264,23 +339,41 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
                           }
                         }}
                       >
-                        <p className="flex items-center text-xs text-muted-foreground">
-                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                          Finish signing in on the Claude tab (
-                          <a
-                            href={login.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mx-1 underline"
-                          >
-                            reopen
-                          </a>
-                          ).
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          If that tab ends on an error page, copy its address
-                          (or the code shown) and paste it here.
-                        </p>
+                        {REMOTE ? (
+                          <p className="text-xs text-muted-foreground">
+                            Approve access on the Claude tab (
+                            <a
+                              href={login.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="underline"
+                            >
+                              reopen
+                            </a>
+                            ). It then lands on a localhost page that won't
+                            load. Copy that page's address and paste it here.
+                          </p>
+                        ) : (
+                          <>
+                            <p className="flex items-center text-xs text-muted-foreground">
+                              <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                              Finish signing in on the Claude tab (
+                              <a
+                                href={login.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mx-1 underline"
+                              >
+                                reopen
+                              </a>
+                              ).
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              If that tab ends on an error page, copy its
+                              address (or the code shown) and paste it here.
+                            </p>
+                          </>
+                        )}
                         <div className="flex gap-2">
                           <Input
                             aria-label="Claude redirect URL or code"

@@ -156,6 +156,7 @@ async def get_models() -> ModelsResponse:
         active_backend,
         build_options,
         fetch_catalog,
+        missing_api_key,
         subscription_options,
     )
     from mira.dashboard.models_config import (
@@ -182,11 +183,14 @@ async def get_models() -> ModelsResponse:
     api_style = resolve_api_style(config.llm, _api._app_db.get_setting("api_style"))
 
     backend = active_backend(config.llm)
-    catalog = await fetch_catalog(config.llm)
+    # Without a key the API models can't run, so list only subscription models.
+    key_missing = missing_api_key(config.llm)
+    catalog = None if key_missing else await fetch_catalog(config.llm)
     subs = await subscription_options()
 
     def options(purpose: str) -> list[ModelOption]:
-        return [ModelOption(**m) for m in build_options(backend, catalog, purpose) + subs]
+        api = [] if key_missing else build_options(backend, catalog, purpose)
+        return [ModelOption(**m) for m in api + subs]
 
     return ModelsResponse(
         indexing_model=indexing,
@@ -206,6 +210,7 @@ async def get_models() -> ModelsResponse:
         thinking_options=[ModelOption(**m) for m in THINKING_MODES],
         api_style=api_style,
         api_style_options=[ModelOption(**m) for m in API_STYLES],
+        missing_api_key=key_missing,
         **{
             f"{tier}_fallbacks": parse_fallbacks(
                 _api._app_db.get_setting(f"{tier}_fallback_models")

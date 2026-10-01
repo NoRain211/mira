@@ -37,9 +37,9 @@ class ChatGPTOAuthProvider(ResponsesProvider):
             json=body,
         ) as resp:
             if resp.status_code != 200:
-                if resp.status_code == 429:
-                    oauth_accounts.mark_rate_limited(account, resp)
                 await resp.aread()
+                if oauth_accounts.is_quota_error(resp):
+                    oauth_accounts.mark_rate_limited(account, resp)
                 return resp
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):

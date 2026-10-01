@@ -34,6 +34,13 @@ def get_accounts(request: Request) -> dict:
     return {"accounts": oauth_accounts.public_accounts()}
 
 
+@router.get("/api/llm-accounts/usage")
+async def get_usage(request: Request) -> dict:
+    """5-hour / weekly subscription usage per account, read live from each provider."""
+    _require_admin(request)
+    return {"usage": await oauth_accounts.usage()}
+
+
 @router.post("/api/llm-accounts/{provider}/login")
 async def start_login(provider: str, request: Request) -> dict:
     _require_admin(request)

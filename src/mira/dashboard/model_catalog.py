@@ -39,6 +39,17 @@ def active_backend(config: LLMConfig) -> str:
     return "openrouter" if profile.get("name") == "openrouter" else "openai-compatible"
 
 
+def missing_api_key(config: LLMConfig) -> str:
+    """Env var name when the API endpoint needs a key that isn't set, else ""."""
+    if active_backend(config) in {"bedrock", "codex-cli"}:
+        return ""
+    try:
+        _get_api_key(config, profiles.resolve(config.base_url))
+    except Exception:
+        return config.api_key_env
+    return ""
+
+
 def _norm(model_id: str) -> str:
     # OpenRouter serves dash and dot forms of the same id as aliases
     # (anthropic/claude-haiku-4-5 == anthropic/claude-haiku-4.5).

@@ -149,7 +149,7 @@ class AnthropicOAuthProvider:
             if resp.status_code == 400 and "temperature" in body and "temperature" in resp.text:
                 _NO_TEMPERATURE.add(self.config.model)
                 return await self._send(messages, extra_system=extra_system, **body)
-            if resp.status_code == 429:
+            if oauth_accounts.is_quota_error(resp):
                 oauth_accounts.mark_rate_limited(account, resp)
             error = (
                 NonRetriableLLMError

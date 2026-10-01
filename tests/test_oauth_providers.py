@@ -237,6 +237,45 @@ async def test_not_signed_in_raises():
         await oauth_accounts.access_token("anthropic")
 
 
+async def test_store_is_encrypted_with_secret_key_and_reads_old_plain_json(monkeypatch):
+    await _add("chatgpt", email="plain@x.com")  # written before a key was set
+    monkeypatch.setenv("MIRA_SECRET_KEY", "s3cret")
+    assert oauth_accounts._load()["chatgpt"][0]["email"] == "plain@x.com"
+
+    await _add("chatgpt", email="new@x.com")
+    raw = oauth_accounts._store_path().read_bytes()
+    assert b"new@x.com" not in raw and b"tok" not in raw
+    assert len(oauth_accounts._load()["chatgpt"]) == 2
+
+    monkeypatch.setenv("MIRA_SECRET_KEY", "wrong")
+    with pytest.raises(Exception, match="different MIRA_SECRET_KEY"):
+        oauth_accounts._load()
+
+
+async def test_usage_reads_both_providers(monkeypatch):
+    await _add("anthropic")
+    await _add("chatgpt")
+    claude = {
+        "five_hour": {"utilization": 16.0, "resets_at": "2026-10-01T21:40:00+00:00"},
+        "seven_day": {"utilization": 42.0, "resets_at": "2026-10-06T16:00:00+00:00"},
+    }
+    window = {"used_percent": 35, "limit_window_seconds": 604800, "reset_at": 1791318256}
+    chatgpt = {"rate_limit": {"primary_window": window, "secondary_window": None}}
+    _route(
+        monkeypatch,
+        lambda r: httpx.Response(200, json=claude if "anthropic" in r.url.host else chatgpt),
+    )
+
+    usage = await oauth_accounts.usage()
+
+    (claude_windows,) = usage["anthropic"].values()
+    (chatgpt_windows,) = usage["chatgpt"].values()
+    assert [(w["label"], w["percent"]) for w in claude_windows] == [("5-hour", 16), ("Weekly", 42)]
+    assert chatgpt_windows == [
+        {"label": "Weekly", "percent": 35.0, "resets_at": "2026-10-06T20:24:16+00:00"}
+    ]
+
+
 _CLAUDE_OK = {"content": [{"type": "text", "text": '{"ok": 1}'}], "usage": {}}
 
 
