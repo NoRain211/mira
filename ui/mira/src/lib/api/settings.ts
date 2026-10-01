@@ -1,7 +1,28 @@
-import { fetchJson, putJson } from "./http"
+import { deleteJson, fetchJson, postJson, putJson } from "./http"
+
+export type LlmProviderStatus = {
+  provider: string
+  codex: {
+    connected: boolean
+    pending: { url: string; code: string } | null
+    error: string | null
+  }
+  claude: { connected: boolean }
+}
 
 // Model selection, cost estimate, and admin review-config overrides.
 export const settingsApi = {
+  getLlmProvider: () =>
+    fetchJson<LlmProviderStatus>("/api/settings/llm-provider"),
+  setLlmProvider: (provider: string) =>
+    putJson<{ ok: boolean }>("/api/settings/llm-provider", { provider }),
+  startCodexLogin: () =>
+    postJson<{ url: string; code: string }>("/api/settings/codex-login", {}),
+  codexLogout: () => deleteJson("/api/settings/codex-login"),
+  saveClaudeToken: (token: string) =>
+    putJson<{ ok: boolean }>("/api/settings/claude-token", { token }),
+  clearClaudeToken: () => deleteJson("/api/settings/claude-token"),
+
   getModels: () =>
     fetchJson<{
       indexing_model: string
@@ -20,7 +41,11 @@ export const settingsApi = {
         recommended?: boolean
       }[]
       review_options: { value: string; label: string; recommended?: boolean }[]
-      security_options: { value: string; label: string; recommended?: boolean }[]
+      security_options: {
+        value: string
+        label: string
+        recommended?: boolean
+      }[]
       review_thinking_mode: string
       thinking_options: {
         value: string

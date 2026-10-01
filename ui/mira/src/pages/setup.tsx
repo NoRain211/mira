@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router"
 
+import { LlmProviderCard } from "@/components/llm-provider-card"
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,7 +29,7 @@ export function SetupPage() {
   const [indexingOptions, setIndexingOptions] = useState<ModelOption[]>([])
   const [reviewOptions, setReviewOptions] = useState<ModelOption[]>([])
 
-  useEffect(() => {
+  const loadModels = () =>
     api.getModels().then((data) => {
       setIndexingModel(data.indexing_source === "config" ? "" : data.indexing_model)
       setReviewModel(data.review_source === "config" ? "" : data.review_model)
@@ -38,6 +39,9 @@ export function SetupPage() {
       setReviewOptions(data.review_options)
       setLoading(false)
     })
+
+  useEffect(() => {
+    loadModels()
   }, [])
 
   const handleSave = async () => {
@@ -63,9 +67,12 @@ export function SetupPage() {
           Welcome to Mira
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Choose which models to use for indexing and reviews
+          Choose a model provider, then the models to use for indexing and
+          reviews
         </p>
       </div>
+
+      <LlmProviderCard onChanged={loadModels} />
 
       <Card>
         <CardHeader className="pb-3">

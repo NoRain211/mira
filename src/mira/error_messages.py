@@ -125,7 +125,7 @@ LLM_ERROR_MESSAGES: dict[str, ErrorMessage] = {
     ),
     # Claude Code CLI provider errors
     "claude_token_missing": ErrorMessage(
-        full="{env} is not set. Run `claude setup-token` and export the token.",
+        full="No Claude token. Paste one from `claude setup-token` in Settings → Models, or set {env}.",
         safe="Claude OAuth token not configured",
     ),
     "claude_command_not_found": ErrorMessage(

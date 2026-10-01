@@ -17,6 +17,7 @@ import tempfile
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from mira.exceptions import LLMError
+from mira.llm import subscription_auth
 from mira.llm.codex_cli import _SAFE_ENV_KEYS, CodexCLIProvider
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class ClaudeCLIProvider(CodexCLIProvider):
         Deliberately drops ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL so the CLI can't
         silently switch to metered API billing or a different endpoint.
         """
-        token = os.environ.get(TOKEN_ENV)
+        token = subscription_auth.read_claude_token() or os.environ.get(TOKEN_ENV)
         if not token:
             raise LLMError("claude_token_missing", env=TOKEN_ENV)
         env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV_KEYS}

@@ -155,6 +155,11 @@ and isolate the Mira container from unrelated host files and services.
 
 ### Claude Code CLI (Claude Pro/Max subscription)
 
+The easiest path is the dashboard: **Settings → Models → Model provider** (also shown on
+first-run setup) has **Sign in with ChatGPT** (device-code login) and a field for the
+token from `claude setup-token`. Sign-ins are stored as owner-only files under
+`MIRA_INDEX_DIR/_llm_auth` and take precedence over the env/mount options below.
+
 Mira can also run reviews on a Claude subscription through the Claude Code CLI.
 Create a long-lived OAuth token once with `claude setup-token` and pass it as
 `CLAUDE_CODE_OAUTH_TOKEN`:
