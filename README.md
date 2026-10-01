@@ -115,14 +115,15 @@ docker run -p 8000:8000 --env-file .env \
 
 Mira can run reviews on a ChatGPT (Plus/Pro/Business) or Claude (Pro/Max) subscription
 instead of an API key, using the same OAuth flows as [OpenCodex](https://github.com/lidge-jun/opencodex)
-— no CLI involved. In the dashboard open **Settings → Models → Add provider**:
+— no CLI involved. In the dashboard open **Settings → Providers**:
 
 - **OpenAI (Codex login)** — device-code sign-in: open the link, enter the code.
 - **Anthropic (Claude)** — opens claude.ai; after approving, the browser returns to
   `http://localhost:54545/callback`. Publish that port (`-p 54545:54545`) so Mira can catch it,
   or paste the final URL into the dialog.
 
-Then pick the provider on the same page. Models are listed live from the signed-in account,
+Their models then appear in every model picker on **Settings → Models** (suffixed
+"(ChatGPT)" / "(Claude)"), mixed freely with API-key models per purpose. Lists are live,
 several accounts per provider are supported (**Manage** → **Use**), and tokens refresh
 automatically. Credentials are stored owner-only in `MIRA_INDEX_DIR/_llm_auth/accounts.json`.
 Both flows reuse the official Codex / Claude Code OAuth clients, as OpenCodex does; check
