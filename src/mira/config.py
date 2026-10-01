@@ -48,6 +48,12 @@ class LLMConfig(BaseModel):
     # the security sweep is the highest-stakes pass and must not silently
     # downgrade to the indexing tier.
     security_model: str | None = None
+    # Optional critic for the self-critique pass (falls back to the indexing tier). A model
+    # from another family catches mistakes the reviewer's own family tends to repeat.
+    critique_model: str | None = None
+    # Extra review models whose findings vote with the review model's per chunk; a finding
+    # is kept when most models report it. Replaces same-model reruns (review.ensemble_runs).
+    ensemble_models: list[str] = Field(default_factory=list)
     # Extended-thinking effort for reviews ("off"/"low"/"medium"/"high"/"xhigh"/"max";
     # None/"off" = no reasoning). `review_reasoning_effort` is the mira.yaml-level override;
     # `reasoning_effort` is the resolved value the provider reads (set by

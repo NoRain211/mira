@@ -30,18 +30,20 @@ function FallbackList({
   value,
   onChange,
   options,
+  title = "Fallbacks, tried in order when the model above fails.",
   emptyHint,
 }: {
   value: string[]
   onChange: (v: string[]) => void
   options: ModelOption[]
+  title?: string
   emptyHint?: string
 }) {
   const label = (id: string) => options.find((o) => o.value === id)?.label ?? id
   return (
     <div className="space-y-1.5 border-l pl-3">
       <p className="text-xs text-muted-foreground">
-        Fallbacks, tried in order when the model above fails.
+        {title}
         {value.length === 0 && emptyHint ? ` ${emptyHint}` : ""}
       </p>
       {value.map((id, i) => (
@@ -51,7 +53,7 @@ function FallbackList({
           <Button
             size="icon-sm"
             variant="ghost"
-            aria-label={`Remove fallback ${label(id)}`}
+            aria-label={`Remove ${label(id)}`}
             onClick={() => onChange(value.filter((m) => m !== id))}
           >
             <X />
@@ -89,6 +91,8 @@ export function SettingsPage() {
     review_fallbacks: [] as string[],
     security_fallbacks: [] as string[],
   })
+  const [critiqueModel, setCritiqueModel] = useState("")
+  const [ensembleModels, setEnsembleModels] = useState<string[]>([])
   const [thinkingMode, setThinkingMode] = useState("off")
   const [thinkingOptions, setThinkingOptions] = useState<ModelOption[]>([])
   const [apiStyle, setApiStyle] = useState("chat")
@@ -138,6 +142,8 @@ export function SettingsPage() {
         review_fallbacks: m.review_fallbacks ?? [],
         security_fallbacks: m.security_fallbacks ?? [],
       })
+      setCritiqueModel(m.critique_model ?? "")
+      setEnsembleModels(m.ensemble_models ?? [])
     })
 
   useEffect(() => {
@@ -173,7 +179,11 @@ export function SettingsPage() {
       securityModel,
       thinkingMode,
       apiStyle,
-      fallbacks
+      {
+        ...fallbacks,
+        critique_model: critiqueModel,
+        ensemble_models: ensembleModels,
+      }
     )
     setSavingModels(false)
     setModelsSaved(true)
@@ -474,6 +484,36 @@ export function SettingsPage() {
                 Used for the dedicated security pass. Defaults to the review
                 model — set a cheaper one only if you accept lower security
                 recall.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Critic Model</label>
+              <ModelCombobox
+                value={critiqueModel}
+                onChange={setCritiqueModel}
+                options={reviewOptions}
+                configModel={indexingModel || configIndexingModel}
+                inheritLabel="Use the indexing model"
+              />
+              <p className="text-xs text-muted-foreground">
+                Checks each drafted comment against the code and drops the
+                unsupported ones. A model from a different family than the
+                review model catches mistakes the reviewer keeps repeating.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Second-opinion Models
+              </label>
+              <FallbackList
+                value={ensembleModels}
+                onChange={setEnsembleModels}
+                options={reviewOptions}
+                title="Also review each PR with these; a finding is kept only when most models report it."
+              />
+              <p className="text-xs text-muted-foreground">
+                Raises precision at the cost of one extra review per model. With
+                one extra model, both must agree.
               </p>
             </div>
             <div className="space-y-2">
