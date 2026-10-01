@@ -133,6 +133,38 @@ def _events(mock_dispatch: AsyncMock) -> list[str]:
     return [call.args[0] for call in mock_dispatch.await_args_list]
 
 
+@patch("mira.platforms.handlers.ReviewEngine")
+@patch("mira.platforms.github.webhook.create_provider")
+@patch("mira.platforms.handlers.create_llm")
+@patch("mira.platforms.handlers.load_config")
+async def test_large_pr_reviews_skipped_files_until_done(
+    mock_config: MagicMock,
+    mock_llm_cls: MagicMock,
+    mock_provider_cls: MagicMock,
+    mock_engine_cls: MagicMock,
+    mock_app_auth: AsyncMock,
+) -> None:
+    mock_config.return_value.review.auto_review_rest_rounds = 3
+    engine = AsyncMock()
+    engine.review_pr = AsyncMock(return_value=ReviewResult(summary="ok"))
+    mock_engine_cls.return_value = engine
+
+    with (
+        patch("mira.dashboard.api._app_db") as mock_db,
+        patch("mira.outbound_webhooks.dispatch_event", new_callable=AsyncMock),
+    ):
+        mock_db.get_repo.return_value = MagicMock(status="ready")
+        mock_db.get_pr_review_progress.side_effect = [
+            MagicMock(skipped_paths=["b.py", "c.py"]),
+            MagicMock(skipped_paths=[]),
+        ]
+        await handle_pull_request(_make_pr_payload(), mock_app_auth, "mira-bot")
+
+    # First review, then one follow-up for the skipped files; stops once nothing is left.
+    assert engine.review_pr.await_count == 2
+    assert engine._review_only_paths == {"b.py", "c.py"}
+
+
 def _data_for(mock_dispatch: AsyncMock, event: str) -> dict:
     return next(c.args[1] for c in mock_dispatch.await_args_list if c.args[0] == event)
 
