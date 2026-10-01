@@ -153,6 +153,36 @@ Mira disables ensemble sampling for this provider. The mounted OAuth session is
 still a sensitive deployment credential: use a dedicated Codex account/session
 and isolate the Mira container from unrelated host files and services.
 
+### Claude Code CLI (Claude Pro/Max subscription)
+
+Mira can also run reviews on a Claude subscription through the Claude Code CLI.
+Create a long-lived OAuth token once with `claude setup-token` and pass it as
+`CLAUDE_CODE_OAUTH_TOKEN`:
+
+```yaml
+# mira.yaml
+llm:
+  provider: "claude-cli"
+  model: "sonnet"              # sonnet | opus | haiku | a full model id | claude-default
+  indexing_model: "haiku"
+  claude_timeout_seconds: 900  # optional
+```
+
+```bash
+docker run -p 8000:8000 --env-file .env \
+  -e CLAUDE_CODE_OAUTH_TOKEN \
+  -v "$(pwd)/mira.yaml:/app/mira.yaml:ro" \
+  ghcr.io/miracodeai/mira:latest --config /app/mira.yaml
+```
+
+The official image includes a pinned Claude Code CLI. Each call runs `claude -p`
+in an empty temporary home with all built-in tools and MCP servers disabled, and
+the child process gets only a small allowlist of environment variables plus the
+OAuth token, so a stray `ANTHROPIC_API_KEY` or `ANTHROPIC_BASE_URL` can't
+redirect billing. As with `codex-cli`, the provider and command are
+deployment-only settings, ensemble sampling is disabled, and token counts are
+estimates. Subscription usage limits apply.
+
 ## Configuration
 
 `mira.yaml` (loaded via `--config`) holds deployment-wide defaults. Drop a `.mira.yaml` in any repo — or use the dashboard — to override per-repo; both deep-merge over `mira.yaml` for that repo only:
