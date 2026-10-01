@@ -81,6 +81,8 @@ def _get_api_key(config: LLMConfig, profile: dict | None = None) -> str:
     empty string is returned without error — useful for local endpoints
     (Ollama, llama.cpp server) that don't require auth.
     """
+    if config.api_key:
+        return config.api_key
     if config.api_key_env == "":
         return ""
     key = os.environ.get(config.api_key_env, "")

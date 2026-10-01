@@ -132,6 +132,10 @@ LLM_ERROR_MESSAGES: dict[str, ErrorMessage] = {
         full="{provider} sign-in failed: {detail}",
         safe="{provider} sign-in failed",
     ),
+    "provider_not_connected": ErrorMessage(
+        full="Provider {provider} is not connected (Settings → Providers)",
+        safe="Provider {provider} is not connected",
+    ),
 }
 
 

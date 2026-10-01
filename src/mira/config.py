@@ -25,7 +25,7 @@ _DEFAULT_CONFIG_FILENAMES = (".mira.yaml", ".mira.yml")
 def _is_local_host(host: str) -> bool:
     """Loopback, private/link-local IP literals, and dotless hostnames
     (docker-compose services) — where a plain-http endpoint is legitimate."""
-    if host == "localhost" or "." not in host:
+    if host in ("localhost", "host.docker.internal") or "." not in host:
         return True
     try:
         ip = ipaddress.ip_address(host)
@@ -77,6 +77,8 @@ class LLMConfig(BaseModel):
     # for local endpoints that don't require auth.
     base_url: str = "https://openrouter.ai/api/v1"
     api_key_env: str = "OPENROUTER_API_KEY"
+    # Key for a provider connected in Settings → Providers (set at routing time, never saved).
+    api_key: str | None = Field(default=None, repr=False, exclude=True)
     # AWS Bedrock settings. Auth uses the standard AWS credential chain
     # (env vars, instance profile, ECS task role, SSO).
     region: str = "us-east-1"

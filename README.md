@@ -121,6 +121,11 @@ instead of an API key, using the same OAuth flows as [OpenCodex](https://github.
 - **Anthropic (Claude)** — opens claude.ai; after approving, the browser returns to
   `http://localhost:54545/callback`. Publish that port (`-p 54545:54545`) so Mira can catch it,
   or paste the final URL into the dialog.
+- **Free / Local / Paid tabs** — built-in presets for OpenAI-compatible providers (NVIDIA NIM,
+  Groq, Cerebras, Gemini, OpenRouter, DeepSeek, Ollama, LM Studio, …). Paste a key (local ones
+  need none) and Mira checks it by listing models. **Add a custom one** takes any other
+  OpenAI-compatible base URL. Keys live in the same encrypted store as the sign-ins, and models
+  appear as `@<provider>/<model>`. From Docker, reach local servers via `host.docker.internal`.
 
 Their models then appear in every model picker on **Settings → Models** (suffixed
 "(ChatGPT)" / "(Claude)"), mixed freely with API-key models per purpose. Lists are live,

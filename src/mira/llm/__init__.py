@@ -109,6 +109,9 @@ def _create_one(config: LLMConfig) -> LLMProviderProtocol:
 
             return ChatGPTOAuthProvider(sub)
 
+    if config.model.startswith("@"):
+        return _create_connected(config)
+
     if config.provider == "bedrock":
         from mira.llm.bedrock import BedrockProvider
 
@@ -128,3 +131,31 @@ def _create_one(config: LLMConfig) -> LLMProviderProtocol:
     from mira.llm.provider import LLMProvider
 
     return LLMProvider(config)
+
+
+def _create_connected(config: LLMConfig) -> LLMProviderProtocol:
+    """`@<id>/<model>` runs on a provider connected in Settings → Providers."""
+    from mira.llm import api_providers
+    from mira.llm import provider_profiles as profiles
+    from mira.llm.provider import LLMProvider
+
+    pid, _, model = config.model[1:].partition("/")
+    provider = api_providers.get(pid)
+    if provider is None:
+        raise NonRetriableLLMError("provider_not_connected", provider=pid)
+    key = provider.get("api_key") or None
+    # The client strips the first "vendor/" segment unless the endpoint's profile keeps it
+    # (OpenRouter); prefix with the id so the provider gets its own model id unchanged.
+    if profiles.resolve(provider["base_url"]).get("model_prefix") != "keep":
+        model = f"{pid}/{model}"
+    return LLMProvider(
+        config.model_copy(
+            update={
+                "model": model,
+                "base_url": provider["base_url"],
+                "api_key": key,
+                "api_key_env": config.api_key_env if key else "",
+                "api_style": "chat",
+            }
+        )
+    )

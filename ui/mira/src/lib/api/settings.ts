@@ -15,6 +15,21 @@ export type LlmAccountProvider = "chatgpt" | "anthropic"
 export type LlmAccounts = {
   accounts: Record<LlmAccountProvider, LlmAccount[]>
 }
+export type ProviderPreset = {
+  id: string
+  label: string
+  tier: "free" | "paid" | "local"
+  base_url: string
+  dashboard: string
+  note: string
+  key: "required" | "optional" | "none"
+}
+export type ConnectedProvider = {
+  id: string
+  label: string
+  base_url: string
+  has_key: boolean
+}
 
 // Model selection, cost estimate, and admin review-config overrides.
 export const settingsApi = {
@@ -46,6 +61,22 @@ export const settingsApi = {
     deleteJson(`/api/llm-accounts/${provider}/${id}`),
   logOutLlmProvider: (provider: LlmAccountProvider) =>
     deleteJson(`/api/llm-accounts/${provider}`),
+  getApiProviders: () =>
+    fetchJson<{ presets: ProviderPreset[]; connected: ConnectedProvider[] }>(
+      "/api/llm-providers"
+    ),
+  connectApiProvider: (body: {
+    preset_id?: string
+    label?: string
+    base_url: string
+    api_key: string
+  }) =>
+    postJson<{ ok: boolean; id: string; models: number }>(
+      "/api/llm-providers",
+      body
+    ),
+  disconnectApiProvider: (id: string) =>
+    deleteJson(`/api/llm-providers/${encodeURIComponent(id)}`),
 
   getModels: () =>
     fetchJson<{
