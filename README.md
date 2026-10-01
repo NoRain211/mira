@@ -111,6 +111,23 @@ docker run -p 8000:8000 --env-file .env \
 
 → Full walkthrough: [creating the GitHub App & quickstart](https://docs.miracode.ai/quickstart) · [GitLab setup](https://docs.miracode.ai/gitlab) · [deploy options](https://docs.miracode.ai/deployment) · [choosing models, custom endpoints & AWS Bedrock](https://docs.miracode.ai/configuration/models)
 
+### ChatGPT / Claude subscription sign-in
+
+Mira can run reviews on a ChatGPT (Plus/Pro/Business) or Claude (Pro/Max) subscription
+instead of an API key, using the same OAuth flows as [OpenCodex](https://github.com/lidge-jun/opencodex)
+— no CLI involved. In the dashboard open **Settings → Models → Add provider**:
+
+- **OpenAI (Codex login)** — device-code sign-in: open the link, enter the code.
+- **Anthropic (Claude)** — opens claude.ai; after approving, the browser returns to
+  `http://localhost:54545/callback`. Publish that port (`-p 54545:54545`) so Mira can catch it,
+  or paste the final URL into the dialog.
+
+Then pick the provider on the same page. Models are listed live from the signed-in account,
+several accounts per provider are supported (**Manage** → **Use**), and tokens refresh
+automatically. Credentials are stored owner-only in `MIRA_INDEX_DIR/_llm_auth/accounts.json`.
+Both flows reuse the official Codex / Claude Code OAuth clients, as OpenCodex does; check
+that this fits your plan's terms before relying on it.
+
 ### Codex CLI
 
 If you already use OpenAI Codex locally, Mira can run reviews through the
@@ -152,41 +169,6 @@ Codex CLI does not expose Mira's temperature or hard output-token controls, so
 Mira disables ensemble sampling for this provider. The mounted OAuth session is
 still a sensitive deployment credential: use a dedicated Codex account/session
 and isolate the Mira container from unrelated host files and services.
-
-### Claude Code CLI (Claude Pro/Max subscription)
-
-The easiest path is the dashboard: **Settings → Models → Model provider** (also shown on
-first-run setup) has **Sign in with ChatGPT** (device-code login) and a field for the
-token from `claude setup-token`. Sign-ins are stored as owner-only files under
-`MIRA_INDEX_DIR/_llm_auth` and take precedence over the env/mount options below.
-
-Mira can also run reviews on a Claude subscription through the Claude Code CLI.
-Create a long-lived OAuth token once with `claude setup-token` and pass it as
-`CLAUDE_CODE_OAUTH_TOKEN`:
-
-```yaml
-# mira.yaml
-llm:
-  provider: "claude-cli"
-  model: "sonnet"              # sonnet | opus | haiku | a full model id | claude-default
-  indexing_model: "haiku"
-  claude_timeout_seconds: 900  # optional
-```
-
-```bash
-docker run -p 8000:8000 --env-file .env \
-  -e CLAUDE_CODE_OAUTH_TOKEN \
-  -v "$(pwd)/mira.yaml:/app/mira.yaml:ro" \
-  ghcr.io/miracodeai/mira:latest --config /app/mira.yaml
-```
-
-The official image includes a pinned Claude Code CLI. Each call runs `claude -p`
-in an empty temporary home with all built-in tools and MCP servers disabled, and
-the child process gets only a small allowlist of environment variables plus the
-OAuth token, so a stray `ANTHROPIC_API_KEY` or `ANTHROPIC_BASE_URL` can't
-redirect billing. As with `codex-cli`, the provider and command are
-deployment-only settings, ensemble sampling is disabled, and token counts are
-estimates. Subscription usage limits apply.
 
 ## Configuration
 

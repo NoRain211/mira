@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router"
 
-import { LlmProviderCard } from "@/components/llm-provider-card"
+import { ProvidersPanel } from "@/components/providers-panel"
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
 import { Button } from "@/components/ui/button"
 import {
@@ -72,7 +72,7 @@ export function SetupPage() {
         </p>
       </div>
 
-      <LlmProviderCard onChanged={loadModels} />
+      <ProvidersPanel onChanged={loadModels} />
 
       <Card>
         <CardHeader className="pb-3">

@@ -1,0 +1,237 @@
+"""Subscription OAuth accounts + providers (ChatGPT / Claude), HTTP mocked."""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+
+from mira.config import LLMConfig
+from mira.llm import create_llm, oauth_accounts
+from mira.llm.anthropic_oauth import AnthropicOAuthProvider, _to_anthropic
+from mira.llm.chatgpt_oauth import ChatGPTOAuthProvider
+from mira.llm.tool_schemas import SUBMIT_REVIEW_TOOL
+
+
+@pytest.fixture(autouse=True)
+def _store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MIRA_INDEX_DIR", str(tmp_path))
+    oauth_accounts._logins.clear()
+
+
+def _route(monkeypatch: pytest.MonkeyPatch, handler) -> list[httpx.Request]:
+    """Send every httpx.AsyncClient request through handler(request) -> Response."""
+    seen: list[httpx.Request] = []
+    real = httpx.AsyncClient.__init__
+
+    def init(self, *args, **kwargs):
+        def record(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return handler(request)
+
+        kwargs["transport"] = httpx.MockTransport(record)
+        real(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", init)
+    return seen
+
+
+async def _add(provider: str, **creds) -> None:
+    await oauth_accounts._add_account(
+        provider, {"access": "tok", "refresh": "ref", "expires": time.time() + 3600, **creds}
+    )
+
+
+def test_model_prefix_routes_to_subscription_regardless_of_provider():
+    claude = create_llm(LLMConfig(model="claude/claude-sonnet-x", fallback_model="openai/gpt-5"))
+    chatgpt = create_llm(LLMConfig(provider="bedrock", model="chatgpt/gpt-6-sol"))
+    assert isinstance(claude, AnthropicOAuthProvider)
+    assert (claude.config.model, claude.config.fallback_model) == ("claude-sonnet-x", None)
+    assert isinstance(chatgpt, ChatGPTOAuthProvider)
+    assert chatgpt.config.model == "gpt-6-sol"
+    assert not isinstance(
+        create_llm(LLMConfig(model="anthropic/claude-sonnet-4.6")), AnthropicOAuthProvider
+    )
+
+
+async def test_subscription_options_list_only_signed_in_accounts(monkeypatch):
+    from mira.dashboard import model_catalog
+
+    model_catalog._cache.clear()
+    await _add("chatgpt")
+
+    async def fake_list(account):
+        return [{"value": "gpt-6-sol", "label": "GPT-6-Sol"}]
+
+    monkeypatch.setattr(oauth_accounts, "list_models", fake_list)
+
+    assert await model_catalog.subscription_options() == [
+        {"value": "chatgpt/gpt-6-sol", "label": "GPT-6-Sol (ChatGPT)", "recommended": False}
+    ]
+
+
+async def test_expired_token_is_refreshed_and_persisted(monkeypatch):
+    await _add("anthropic", email="me@example.com", expires=time.time() - 10)
+    _route(
+        monkeypatch,
+        lambda r: httpx.Response(
+            200, json={"access_token": "new", "refresh_token": "ref2", "expires_in": 28800}
+        ),
+    )
+
+    account = await oauth_accounts.access_token("anthropic")
+
+    assert account["access"] == "new"
+    stored = oauth_accounts._load()["anthropic"][0]
+    assert (stored["access"], stored["refresh"], stored["email"]) == (
+        "new",
+        "ref2",
+        "me@example.com",
+    )
+
+
+async def test_public_accounts_mask_email_and_hide_tokens():
+    await _add("chatgpt", email="someone@gmail.com")
+    accounts = oauth_accounts.public_accounts()
+    assert accounts["chatgpt"][0]["email"] == "s***e@gmail.com"
+    assert "tok" not in json.dumps(accounts)
+
+
+async def test_new_account_becomes_active_and_same_email_replaces():
+    await _add("chatgpt", email="a@x.com")
+    await _add("chatgpt", email="b@x.com")
+    await _add("chatgpt", email="a@x.com", access="newer")
+    accounts = oauth_accounts._load()["chatgpt"]
+    assert [a["email"] for a in accounts] == ["b@x.com", "a@x.com"]
+    assert oauth_accounts._active(accounts)["access"] == "newer"
+
+
+async def test_claude_paste_accepts_redirect_url(monkeypatch):
+    seen = _route(
+        monkeypatch,
+        lambda r: httpx.Response(
+            200,
+            json={
+                "access_token": "a",
+                "refresh_token": "r",
+                "expires_in": 3600,
+                "account": {"email_address": "me@yahoo.com"},
+            },
+        ),
+    )
+    login = await oauth_accounts.start_anthropic_login()
+    url = f"http://localhost:54545/callback?code=abc&state={login['login_id']}"
+
+    await oauth_accounts.complete_anthropic_login(login["login_id"], url)
+
+    body = json.loads(seen[-1].content)
+    assert body["code"] == "abc" and body["code_verifier"]
+    assert oauth_accounts.public_accounts()["anthropic"][0]["email"] == "m***e@yahoo.com"
+
+
+def test_to_anthropic_merges_tool_results_and_prefixes_tools():
+    system, msgs = _to_anthropic(
+        [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "review"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "t1", "function": {"name": "read_file", "arguments": '{"p": 1}'}},
+                    {"id": "t2", "function": {"name": "grep_repo", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "a"},
+            {"role": "tool", "tool_call_id": "t2", "content": "b"},
+        ]
+    )
+    assert system == "rules"
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
+    assert msgs[1]["content"][0]["name"] == "custom_read_file"
+    assert [b["tool_use_id"] for b in msgs[2]["content"]] == ["t1", "t2"]
+
+
+async def test_claude_review_sends_oauth_shape_and_returns_tool_input(monkeypatch):
+    await _add("anthropic")
+    seen = _route(
+        monkeypatch,
+        lambda r: httpx.Response(
+            200,
+            json={
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "x",
+                        "name": "custom_submit_review",
+                        "input": {"comments": []},
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            },
+        ),
+    )
+    provider = AnthropicOAuthProvider(
+        LLMConfig(provider="anthropic-oauth", model="claude-sonnet-x")
+    )
+
+    result = await provider.review(
+        [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    )
+
+    assert json.loads(result) == {"comments": []}
+    req = seen[-1]
+    body = json.loads(req.content)
+    assert req.headers["authorization"] == "Bearer tok"
+    assert "oauth-2025-04-20" in req.headers["anthropic-beta"]
+    assert body["system"][0]["text"] == oauth_accounts.CLAUDE_CODE_IDENTITY
+    assert body["tool_choice"] == {
+        "type": "tool",
+        "name": "custom_" + SUBMIT_REVIEW_TOOL["function"]["name"],
+    }
+    assert provider.usage["total_tokens"] == 13
+
+
+async def test_chatgpt_streams_and_moves_system_to_instructions(monkeypatch):
+    await _add("chatgpt", account_id="acct-1")
+    item = {
+        "type": "function_call",
+        "call_id": "c",
+        "name": "submit_review",
+        "arguments": '{"comments": []}',
+    }
+    sse = "\n".join(
+        [
+            "data: " + json.dumps({"type": "response.output_item.done", "item": item}),
+            "data: "
+            + json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [], "usage": {"input_tokens": 5, "output_tokens": 2}},
+                }
+            ),
+            "",
+        ]
+    )
+    seen = _route(monkeypatch, lambda r: httpx.Response(200, text=sse))
+    provider = ChatGPTOAuthProvider(LLMConfig(provider="chatgpt-oauth", model="gpt-6-sol"))
+
+    result = await provider.review(
+        [{"role": "system", "content": "rules"}, {"role": "user", "content": "u"}]
+    )
+
+    assert json.loads(result) == {"comments": []}
+    body = json.loads(seen[-1].content)
+    assert body["instructions"] == "rules" and body["stream"] is True and body["store"] is False
+    assert all(i.get("role") != "system" for i in body["input"])
+    assert "temperature" not in body and "max_output_tokens" not in body
+    assert seen[-1].headers["chatgpt-account-id"] == "acct-1"
+    assert provider.usage["total_tokens"] == 7
+
+
+async def test_not_signed_in_raises():
+    with pytest.raises(Exception, match="Not signed in to Claude"):
+        await oauth_accounts.access_token("anthropic")

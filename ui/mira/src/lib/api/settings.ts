@@ -1,27 +1,37 @@
 import { deleteJson, fetchJson, postJson, putJson } from "./http"
 
-export type LlmProviderStatus = {
-  provider: string
-  codex: {
-    connected: boolean
-    pending: { url: string; code: string } | null
-    error: string | null
-  }
-  claude: { connected: boolean }
+export type LlmAccount = { id: string; email: string; active: boolean }
+export type LlmAccountProvider = "chatgpt" | "anthropic"
+export type LlmAccounts = {
+  accounts: Record<LlmAccountProvider, LlmAccount[]>
 }
 
 // Model selection, cost estimate, and admin review-config overrides.
 export const settingsApi = {
-  getLlmProvider: () =>
-    fetchJson<LlmProviderStatus>("/api/settings/llm-provider"),
-  setLlmProvider: (provider: string) =>
-    putJson<{ ok: boolean }>("/api/settings/llm-provider", { provider }),
-  startCodexLogin: () =>
-    postJson<{ url: string; code: string }>("/api/settings/codex-login", {}),
-  codexLogout: () => deleteJson("/api/settings/codex-login"),
-  saveClaudeToken: (token: string) =>
-    putJson<{ ok: boolean }>("/api/settings/claude-token", { token }),
-  clearClaudeToken: () => deleteJson("/api/settings/claude-token"),
+  getLlmAccounts: () => fetchJson<LlmAccounts>("/api/llm-accounts"),
+  startLlmLogin: (provider: LlmAccountProvider) =>
+    postJson<{ login_id: string; url: string; code?: string }>(
+      `/api/llm-accounts/${provider}/login`,
+      {}
+    ),
+  getLlmLogin: (loginId: string) =>
+    fetchJson<{ status: string; error?: string | null }>(
+      `/api/llm-accounts/logins/${encodeURIComponent(loginId)}`
+    ),
+  completeClaudeLogin: (login_id: string, code: string) =>
+    postJson<{ ok: boolean }>("/api/llm-accounts/anthropic/complete", {
+      login_id,
+      code,
+    }),
+  activateLlmAccount: (provider: LlmAccountProvider, id: string) =>
+    postJson<{ ok: boolean }>(
+      `/api/llm-accounts/${provider}/${id}/activate`,
+      {}
+    ),
+  removeLlmAccount: (provider: LlmAccountProvider, id: string) =>
+    deleteJson(`/api/llm-accounts/${provider}/${id}`),
+  logOutLlmProvider: (provider: LlmAccountProvider) =>
+    deleteJson(`/api/llm-accounts/${provider}`),
 
   getModels: () =>
     fetchJson<{

@@ -123,22 +123,14 @@ LLM_ERROR_MESSAGES: dict[str, ErrorMessage] = {
         full="Codex CLI response did not contain a JSON object: {excerpt}",
         safe="Codex CLI response did not contain a JSON object",
     ),
-    # Claude Code CLI provider errors
-    "claude_token_missing": ErrorMessage(
-        full="No Claude token. Paste one from `claude setup-token` in Settings → Models, or set {env}.",
-        safe="Claude OAuth token not configured",
+    # Subscription OAuth (ChatGPT / Claude) errors
+    "oauth_not_signed_in": ErrorMessage(
+        full="Not signed in to {provider}. Add an account in Settings → Models → Add provider.",
+        safe="Not signed in to {provider}",
     ),
-    "claude_command_not_found": ErrorMessage(
-        full="Claude CLI command not found: {command!r}. Install @anthropic-ai/claude-code or set llm.claude_command.",
-        safe="Claude CLI command not found — install @anthropic-ai/claude-code or set llm.claude_command",
-    ),
-    "claude_timeout": ErrorMessage(
-        full="Claude CLI timed out after {seconds}s",
-        safe="Claude CLI timed out",
-    ),
-    "claude_exit_failed": ErrorMessage(
-        full="Claude CLI failed with exit {exit_code}: {detail}",
-        safe="Claude CLI failed",
+    "oauth_failed": ErrorMessage(
+        full="{provider} sign-in failed: {detail}",
+        safe="{provider} sign-in failed",
     ),
 }
 

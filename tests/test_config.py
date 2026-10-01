@@ -254,12 +254,6 @@ class TestGlobalDefaults:
         assert config.llm.codex_sandbox == "read-only"
         assert config.llm.codex_timeout_seconds == 900
 
-    def test_repo_config_cannot_override_claude_command(self, tmp_path: Path):
-        repo_cfg = tmp_path / ".mira.yaml"
-        repo_cfg.write_text("llm:\n  claude_command: ./repo-controlled-claude\n")
-        config = load_config(repo_cfg)
-        assert config.llm.claude_command == "claude"
-
     def test_per_repo_overrides_global(self, tmp_path: Path):
         # Global sets a baseline.
         global_file = tmp_path / "mira.yaml"

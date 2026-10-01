@@ -152,7 +152,12 @@ async def register_forgejo_repo(body: ForgejoRepoRegister, request: Request) -> 
 @router.get("/api/settings/models", response_model=ModelsResponse)
 async def get_models() -> ModelsResponse:
     from mira.config import load_config
-    from mira.dashboard.model_catalog import active_backend, build_options, fetch_catalog
+    from mira.dashboard.model_catalog import (
+        active_backend,
+        build_options,
+        fetch_catalog,
+        subscription_options,
+    )
     from mira.dashboard.models_config import (
         API_STYLES,
         THINKING_MODES,
@@ -177,6 +182,10 @@ async def get_models() -> ModelsResponse:
 
     backend = active_backend(config.llm)
     catalog = await fetch_catalog(config.llm)
+    subs = await subscription_options()
+
+    def options(purpose: str) -> list[ModelOption]:
+        return [ModelOption(**m) for m in build_options(backend, catalog, purpose) + subs]
 
     return ModelsResponse(
         indexing_model=indexing,
@@ -189,9 +198,9 @@ async def get_models() -> ModelsResponse:
         config_indexing_model=get_indexing_model(config.llm),
         config_review_model=get_review_model(config.llm),
         config_security_model=get_security_model(config.llm),
-        indexing_options=[ModelOption(**m) for m in build_options(backend, catalog, "indexing")],
-        review_options=[ModelOption(**m) for m in build_options(backend, catalog, "review")],
-        security_options=[ModelOption(**m) for m in build_options(backend, catalog, "review")],
+        indexing_options=options("indexing"),
+        review_options=options("review"),
+        security_options=options("review"),
         review_thinking_mode=thinking or "off",
         thinking_options=[ModelOption(**m) for m in THINKING_MODES],
         api_style=api_style,
