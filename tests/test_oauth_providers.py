@@ -314,6 +314,24 @@ async def test_claude_falls_back_to_auto_tool_choice(monkeypatch):
     assert len(seen) == 3  # the second call goes straight to auto
 
 
+async def test_claude_thinking_uses_adaptive_then_budget(monkeypatch):
+    await _add("anthropic")
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        if json.loads(r.content)["thinking"]["type"] == "adaptive":
+            return httpx.Response(400, text="adaptive thinking is not supported on this model")
+        return httpx.Response(200, json=_CLAUDE_OK)
+
+    seen = _route(monkeypatch, handler)
+    provider = AnthropicOAuthProvider(LLMConfig(model="claude-old", reasoning_effort="high"))
+
+    assert await provider.complete([{"role": "user", "content": "u"}]) == '{"ok": 1}'
+    first, second = (json.loads(r.content) for r in seen)
+    assert first["output_config"] == {"effort": "high"} and "temperature" not in first
+    assert second["thinking"] == {"type": "enabled", "budget_tokens": 16384}
+    assert "output_config" not in second and second["max_tokens"] > 16384
+
+
 async def test_rate_limited_account_rotates_to_next(monkeypatch):
     oauth_accounts._rate_limited_until.clear()
     await _add("anthropic", email="a@x.com", access="tok-a")

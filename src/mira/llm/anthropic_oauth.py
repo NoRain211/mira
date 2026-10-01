@@ -27,6 +27,9 @@ _JSON_ONLY = "Respond with only one valid JSON object. No markdown fences or exp
 _NO_TEMPERATURE: set[str] = set()
 # Models that rejected a forced tool_choice; they get "auto" plus an instruction instead.
 _NO_FORCED_TOOL: set[str] = set()
+# Models that rejected adaptive thinking (Haiku 4.5, Sonnet 4.x); they get a token budget.
+_BUDGET_THINKING: set[str] = set()
+_THINKING_BUDGET = {"low": 2048, "medium": 8192, "high": 16384, "xhigh": 24576, "max": 32000}
 
 
 def _wire_name(name: str) -> str:
@@ -128,6 +131,17 @@ class AnthropicOAuthProvider:
     async def _send(self, messages: list, *, extra_system: str = "", **body: object) -> dict:
         if self.config.model in _NO_TEMPERATURE:
             body.pop("temperature", None)
+        effort = self.config.reasoning_effort
+        if effort and effort != "off":
+            body.pop("temperature", None)  # thinking rejects custom temperatures
+            if self.config.model in _BUDGET_THINKING:
+                budget = _THINKING_BUDGET.get(effort, 8192)
+                body.pop("output_config", None)
+                body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                body["max_tokens"] = max(int(body.get("max_tokens") or 0), budget + 4096)  # type: ignore[call-overload]
+            else:
+                body["thinking"] = {"type": "adaptive"}
+                body["output_config"] = {"effort": "low" if effort == "minimal" else effort}
         forced = body.get("tool_choice")
         if self.config.model in _NO_FORCED_TOOL and isinstance(forced, dict) and "name" in forced:
             body["tool_choice"] = {"type": "auto"}
@@ -163,6 +177,9 @@ class AnthropicOAuthProvider:
                 and forced is body.get("tool_choice")
             ):
                 _NO_FORCED_TOOL.add(self.config.model)
+                return await self._send(messages, extra_system=extra_system, **body)
+            if resp.status_code == 400 and "adaptive thinking" in resp.text:
+                _BUDGET_THINKING.add(self.config.model)
                 return await self._send(messages, extra_system=extra_system, **body)
             if oauth_accounts.is_quota_error(resp):
                 oauth_accounts.mark_rate_limited(account, resp)

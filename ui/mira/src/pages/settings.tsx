@@ -536,8 +536,8 @@ export function SettingsPage() {
               <p className="text-xs text-muted-foreground">
                 Extended reasoning budget for reviews — improves depth on
                 capable models at the cost of latency and tokens. Works on
-                OpenRouter and Bedrock (Claude); on other endpoints it's skipped
-                automatically when unsupported.
+                OpenRouter, Bedrock (Claude) and ChatGPT/Claude subscriptions;
+                on other endpoints it's skipped automatically when unsupported.
               </p>
             </div>
             {backend !== "bedrock" && (
