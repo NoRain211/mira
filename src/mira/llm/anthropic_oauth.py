@@ -25,6 +25,8 @@ _TOOL_PREFIX = "custom_"
 _JSON_ONLY = "Respond with only one valid JSON object. No markdown fences or explanatory text."
 # Models that rejected `temperature` (newer Claude models deprecate it); learned per process.
 _NO_TEMPERATURE: set[str] = set()
+# Models that rejected a forced tool_choice; they get "auto" plus an instruction instead.
+_NO_FORCED_TOOL: set[str] = set()
 
 
 def _wire_name(name: str) -> str:
@@ -126,6 +128,12 @@ class AnthropicOAuthProvider:
     async def _send(self, messages: list, *, extra_system: str = "", **body: object) -> dict:
         if self.config.model in _NO_TEMPERATURE:
             body.pop("temperature", None)
+        forced = body.get("tool_choice")
+        if self.config.model in _NO_FORCED_TOOL and isinstance(forced, dict) and "name" in forced:
+            body["tool_choice"] = {"type": "auto"}
+            extra_system = (
+                f"{extra_system}\n\nRespond by calling the {forced['name']} tool.".strip()
+            )
         account = await oauth_accounts.access_token("anthropic")
         system_text, wire_messages = _to_anthropic(messages)
         system = [{"type": "text", "text": oauth_accounts.CLAUDE_CODE_IDENTITY}]
@@ -148,6 +156,13 @@ class AnthropicOAuthProvider:
         if resp.status_code != 200:
             if resp.status_code == 400 and "temperature" in body and "temperature" in resp.text:
                 _NO_TEMPERATURE.add(self.config.model)
+                return await self._send(messages, extra_system=extra_system, **body)
+            if (
+                resp.status_code == 400
+                and "tool_choice" in resp.text
+                and forced is body.get("tool_choice")
+            ):
+                _NO_FORCED_TOOL.add(self.config.model)
                 return await self._send(messages, extra_system=extra_system, **body)
             if oauth_accounts.is_quota_error(resp):
                 oauth_accounts.mark_rate_limited(account, resp)
