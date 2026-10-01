@@ -429,6 +429,10 @@ def load_config(
             db_overrides = _app_db.get_global_review_overrides()
             if db_overrides:
                 data = _deep_merge(data, db_overrides)
+            # Model provider chosen on the dashboard (API key / ChatGPT / Claude subscription).
+            db_provider = _app_db.get_setting("llm_provider")
+            if db_provider:
+                data = _deep_merge(data, {"llm": {"provider": db_provider}})
     except Exception as _db_exc:  # noqa: BLE001
         logger.debug("load_config: skipping DB overrides (%s)", _db_exc)
 

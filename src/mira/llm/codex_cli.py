@@ -80,9 +80,14 @@ class CodexCLIProvider:
 
     def _prepare_codex_home(self, invocation_root: str) -> str:
         """Create writable ephemeral Codex state containing only OAuth auth."""
+        from mira.llm import subscription_auth
+
         destination = Path(invocation_root) / "codex-home"
         destination.mkdir(parents=True, mode=0o700)
-        source_home = self.config.codex_home or os.environ.get("CODEX_HOME")
+        if subscription_auth.codex_connected():
+            source_home: str | None = str(subscription_auth.codex_home())
+        else:
+            source_home = self.config.codex_home or os.environ.get("CODEX_HOME")
         if source_home:
             source_auth = Path(source_home).expanduser() / "auth.json"
             if not source_auth.is_file():

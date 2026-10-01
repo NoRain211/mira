@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
+import { LlmProviderCard } from "@/components/llm-provider-card"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -67,8 +68,7 @@ export function SettingsPage() {
   // bucket for non-field errors.
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
-  useEffect(() => {
-    if (!currentUser?.is_admin) return
+  const loadModels = () =>
     api.getModels().then((m) => {
       setIndexingModel(m.indexing_source === "config" ? "" : m.indexing_model)
       setReviewModel(m.review_source === "config" ? "" : m.review_model)
@@ -85,6 +85,10 @@ export function SettingsPage() {
       setApiStyle(m.api_style ?? "chat")
       setApiStyleOptions(m.api_style_options ?? [])
     })
+
+  useEffect(() => {
+    if (!currentUser?.is_admin) return
+    loadModels()
     api.getGlobalSettings().then((s) => {
       setEffective(
         (s.effective as {
@@ -329,6 +333,8 @@ export function SettingsPage() {
         </p>
       </div>
 
+      {section === "models" && <LlmProviderCard onChanged={loadModels} />}
+
       {section === "models" && (
         <Card>
           <CardHeader>
@@ -337,9 +343,12 @@ export function SettingsPage() {
               Choose models for indexing and PR reviews
               {backend &&
                 ` — listed from ${
-                  { openrouter: "OpenRouter", bedrock: "AWS Bedrock" }[
-                    backend
-                  ] ?? "your configured endpoint"
+                  {
+                    openrouter: "OpenRouter",
+                    bedrock: "AWS Bedrock",
+                    "codex-cli": "your ChatGPT subscription",
+                    "claude-cli": "your Claude subscription",
+                  }[backend] ?? "your configured endpoint"
                 }`}
             </CardDescription>
           </CardHeader>
