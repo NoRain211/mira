@@ -198,3 +198,32 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
 def parse_fallbacks(value: str | None) -> list[str]:
     """Comma-separated fallback ids as stored in the settings table."""
     return [m.strip() for m in (value or "").split(",") if m.strip()]
+
+
+def _db_setting(key: str) -> str | None:
+    try:
+        from mira.dashboard.api import _app_db
+
+        return _app_db.get_setting(key) if _app_db is not None else None
+    except Exception:
+        return None
+
+
+def critique_config(base: LLMConfig) -> LLMConfig | None:
+    """Config for a dedicated critic model (DB -> mira.yaml), or None to use the indexing tier."""
+    model = _db_setting("critique_model") or base.critique_model
+    if not model:
+        return None
+    return llm_config_for("indexing", base).model_copy(
+        update={"model": model, "fallback_models": []}
+    )
+
+
+def ensemble_configs(base: LLMConfig) -> list[LLMConfig]:
+    """Review-tier configs for each second-opinion model (DB -> mira.yaml)."""
+    stored = _db_setting("ensemble_models")
+    models = parse_fallbacks(stored) if stored else base.ensemble_models
+    if not models:
+        return []
+    review = llm_config_for("review", base)
+    return [review.model_copy(update={"model": m, "fallback_models": []}) for m in models]

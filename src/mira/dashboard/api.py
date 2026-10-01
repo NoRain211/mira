@@ -382,6 +382,9 @@ class ModelsResponse(BaseModel):
     security_fallbacks: list[str] = []
     # Env var the API endpoint needs but isn't set ("" when ready); its models are then hidden.
     missing_api_key: str = ""
+    # Critic for self-critique ("" = indexing model) and second-opinion review models.
+    critique_model: str = ""
+    ensemble_models: list[str] = []
 
 
 class ModelsUpdate(BaseModel):
@@ -394,6 +397,8 @@ class ModelsUpdate(BaseModel):
     indexing_fallbacks: list[str] | None = None
     review_fallbacks: list[str] | None = None
     security_fallbacks: list[str] | None = None
+    critique_model: str | None = None
+    ensemble_models: list[str] | None = None
 
 
 class GlobalSettingsResponse(BaseModel):

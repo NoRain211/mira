@@ -25,6 +25,7 @@ from mira.core.passes import (
     dependency_review_pass,
     generate_pr_summary,
     regenerate_summary,
+    second_opinion_llms,
     security_review_pass,
     self_critique,
 )
@@ -423,6 +424,7 @@ class ReviewEngine:
         self.llm = llm
         self.indexing_llm = indexing_llm or llm
         self.security_llm = security_llm or llm
+        self._second_opinions: list[LLMProviderProtocol] | None = None
         self.provider = provider
         self.bot_name = bot_name
         self.dry_run = dry_run
@@ -1385,23 +1387,24 @@ class ReviewEngine:
                     # majority-vote findings. The agentic loop (if any) only
                     # runs once; extras sample the plain review path.
                     n_runs = self.config.review.ensemble_runs
+                    if self._second_opinions is None:
+                        self._second_opinions = second_opinion_llms()
+                    if self._second_opinions:
+                        n_runs = 1  # other models vote instead of same-model reruns
                     if n_runs > 1 and not getattr(self.llm, "supports_temperature", True):
                         logger.warning(
                             "Provider does not support temperature controls; "
                             "disabling ensemble runs"
                         )
                         n_runs = 1
-                    if n_runs > 1:
-                        extra_raws = await _asyncio.gather(
-                            *[
-                                self.llm.review(
-                                    messages,
-                                    temperature=self.config.review.ensemble_temperature,
-                                )
-                                for _ in range(n_runs - 1)
-                            ],
-                            return_exceptions=True,
+                    extra_calls = [other.review(messages) for other in self._second_opinions] + [
+                        self.llm.review(
+                            messages, temperature=self.config.review.ensemble_temperature
                         )
+                        for _ in range(n_runs - 1)
+                    ]
+                    if extra_calls:
+                        extra_raws = await _asyncio.gather(*extra_calls, return_exceptions=True)
                         runs = [comments]
                         for raw in extra_raws:
                             if isinstance(raw, BaseException):

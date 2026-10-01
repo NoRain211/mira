@@ -86,6 +86,8 @@ export const settingsApi = {
       review_fallbacks: string[]
       security_fallbacks: string[]
       missing_api_key: string
+      critique_model: string
+      ensemble_models: string[]
     }>("/api/settings/models"),
 
   saveModels: (
@@ -94,10 +96,12 @@ export const settingsApi = {
     security_model: string,
     review_thinking_mode: string = "off",
     api_style: string = "chat",
-    fallbacks?: {
+    extra?: {
       indexing_fallbacks: string[]
       review_fallbacks: string[]
       security_fallbacks: string[]
+      critique_model: string
+      ensemble_models: string[]
     }
   ) =>
     putJson<{ ok: boolean }>("/api/settings/models", {
@@ -106,7 +110,7 @@ export const settingsApi = {
       security_model,
       review_thinking_mode,
       api_style,
-      ...fallbacks,
+      ...extra,
     }),
 
   getCostEstimate: () =>
