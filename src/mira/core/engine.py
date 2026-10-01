@@ -18,6 +18,7 @@ from mira.core.context import expand_context
 from mira.core.diff_parser import parse_diff
 from mira.core.ensemble import merge_ensemble_runs
 from mira.core.file_filter import filter_files
+from mira.core.lint_pass import lint_pass
 from mira.core.noise_filter import drop_already_posted, filter_noise
 from mira.core.passes import (
     agentic_review_loop,
@@ -230,6 +231,36 @@ def _security_relevant_files(files: list) -> list:
             continue
         keep.append(f)
     return keep
+
+
+_TEST_NAME_FORMS = ("test_{}", "{}_test", "{}_spec", "{}.test", "{}.spec", "{}Test", "{}Tests")
+_TESTABLE_EXTS = {"py", "go", "rb", "js", "jsx", "ts", "tsx", "java", "kt"}
+
+
+def _untouched_tests_note(chunk_paths: list[str], changed: set[str], tree: list[str]) -> str:
+    """Prompt note listing changed source files whose existing test file this PR leaves alone."""
+    by_name: dict[str, list[str]] = {}
+    for path in tree:
+        by_name.setdefault(path.rsplit("/", 1)[-1], []).append(path)
+    lines = []
+    for path in chunk_paths:
+        name = path.rsplit("/", 1)[-1]
+        stem, _, ext = name.rpartition(".")
+        if ext not in _TESTABLE_EXTS or name.lower().endswith(_SECURITY_TEST_SUFFIXES):
+            continue
+        tests = [
+            t for form in _TEST_NAME_FORMS for t in by_name.get(f"{form.format(stem)}.{ext}", [])
+        ]
+        if not tests or any(t in changed for t in tests):
+            continue
+        lines.append(f"- {path} (tests: {', '.join(sorted(tests)[:2])})")
+    if not lines:
+        return ""
+    return (
+        "\n\n## Existing tests this PR does not update\n"
+        "If a change below alters behavior these tests cover, say which test needs updating "
+        "(one comment, not one per file).\n" + "\n".join(lines[:10])
+    )
 
 
 def _manifest_files(files: list) -> list:
@@ -1341,7 +1372,12 @@ class ReviewEngine:
                         pr_title=pr_title,
                         pr_description=pr_description,
                         existing_comments=base_existing or None,
-                        code_context=code_context_block,
+                        code_context=(code_context_block or "")
+                        + _untouched_tests_note(
+                            [f.path for f in chunk.files],
+                            {f.path for f in filtered},
+                            self._agentic_repo_tree,
+                        ),
                         learned_rules=learned_rules or None,
                         custom_rules=custom_rules or None,
                         file_history=chunk_history or None,
@@ -1529,6 +1565,11 @@ class ReviewEngine:
             if filtered and self.config.review.secrets_scan
             else _asyncio.sleep(0, result=[])
         )
+        lint_task = _asyncio.create_task(
+            lint_pass(filtered, pr_source_fetcher)
+            if filtered and self.config.review.lint_pass
+            else _asyncio.sleep(0, result=[])
+        )
 
         (
             chunk_results,
@@ -1536,8 +1577,9 @@ class ReviewEngine:
             dependency_comments,
             osv_comments,
             secrets_comments,
+            lint_comments,
         ) = await _asyncio.gather(
-            review_task, security_task, dependency_task, osv_task, secrets_task
+            review_task, security_task, dependency_task, osv_task, secrets_task, lint_task
         )
 
         all_comments: list[ReviewComment] = []
@@ -1557,6 +1599,8 @@ class ReviewEngine:
         all_comments.extend(osv_comments)
         audit.append({"stage": "drafted", "chunk": "secrets", "count": len(secrets_comments)})
         all_comments.extend(secrets_comments)
+        audit.append({"stage": "drafted", "chunk": "lint", "count": len(lint_comments)})
+        all_comments.extend(lint_comments)
 
         all_comments = [classify_severity(c) for c in all_comments]
 
@@ -1591,9 +1635,11 @@ class ReviewEngine:
             _selected = {f.path for f in filtered}
             critique_files = filtered + [f for f in manifest_candidates if f.path not in _selected]
             try:
-                final_comments = await self_critique(
+                # Lint findings come from running ruff, so the critic has nothing to grade.
+                linted = [c for c in final_comments if c.source_pass == "lint"]
+                final_comments = linted + await self_critique(
                     self.llm,
-                    final_comments,
+                    [c for c in final_comments if c.source_pass != "lint"],
                     learned_rules=learned_rules or None,
                     custom_rules=custom_rules or None,
                     indexing_llm=self.indexing_llm,

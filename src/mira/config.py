@@ -250,6 +250,14 @@ class ReviewConfig(BaseModel):
     # rules).
     secrets_scan: bool = True
 
+    # Run ruff's bug-only rules (syntax errors, undefined names) on changed Python files
+    # and file what it finds on added lines. Deterministic; skipped when ruff is absent.
+    lint_pass: bool = True
+
+    # After the first review of a PR too large for one pass, keep reviewing the skipped
+    # files (like `@bot review-rest`) for up to this many extra rounds. 0 = only on request.
+    auto_review_rest_rounds: int = Field(default=2, ge=0, le=10)
+
     # Give the reviewer LLM tools (`read_file`, `grep_repo`) to fetch
     # cross-file context on demand. On unindexed repos this closes the
     # Java/Go gaps JIT pre-fetch can't reach; on indexed repos it lets the

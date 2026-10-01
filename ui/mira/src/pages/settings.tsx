@@ -512,8 +512,9 @@ export function SettingsPage() {
                 title="Also review each PR with these; a finding is kept only when most models report it."
               />
               <p className="text-xs text-muted-foreground">
-                Raises precision at the cost of one extra review per model. With
-                one extra model, both must agree.
+                Posts fewer comments and adds one review per model. With one
+                extra model both must agree, which drops many real findings; use
+                two or more.
               </p>
             </div>
             <div className="space-y-2">

@@ -161,6 +161,31 @@ async def run_pr_review(
     if any(sev >= Severity.WARNING for sev in stats):
         await dispatch_event(REVIEW_HIGH_SEVERITY, event_data)
 
+    # Large PRs: keep reviewing the files the first pass skipped, like `review-rest`.
+    for _ in range(config.review.auto_review_rest_rounds):
+        progress = _app_db.get_pr_review_progress(owner, repo, number, platform=platform)
+        if not progress or not progress.skipped_paths:
+            break
+        if not review_tracker.try_start(repo_full, number, pr_title, pr_url):
+            break
+        rest = ReviewEngine(
+            config=config,
+            llm=llm,
+            provider=provider,
+            bot_name=bot_name,
+            indexing_llm=indexing_llm,
+            security_llm=security_llm,
+        )
+        rest._review_only_paths = set(progress.skipped_paths)  # type: ignore[attr-defined]
+        logger.info("Reviewing %d skipped file(s) on %s", len(progress.skipped_paths), pr_url)
+        try:
+            await rest.review_pr(pr_url)
+            review_tracker.complete(repo_full, number)
+        except Exception as exc:
+            review_tracker.fail(repo_full, number, str(exc))
+            logger.warning("Follow-up review of skipped files failed on %s: %s", pr_url, exc)
+            break
+
 
 async def run_pr_command(
     provider: Any,
