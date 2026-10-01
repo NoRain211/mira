@@ -27,6 +27,8 @@ _CATALOG_TTL = 3600.0
 _FAILURE_TTL = 60.0
 _cache: dict[str, tuple[float, list[dict] | None]] = {}
 _locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# Backends that serve only their own registry entries, never OpenRouter ids.
+_ISOLATED_BACKENDS = {"bedrock", "codex-cli", "claude-cli"}
 
 
 def active_backend(config: LLMConfig) -> str:
@@ -35,6 +37,8 @@ def active_backend(config: LLMConfig) -> str:
         return "bedrock"
     if config.provider in {"codex-cli", "codex_cli", "codex"}:
         return "codex-cli"
+    if config.provider in {"claude-cli", "claude_cli", "claude-code"}:
+        return "claude-cli"
     profile = profiles.resolve(config.base_url)
     return "openrouter" if profile.get("name") == "openrouter" else "openai-compatible"
 
@@ -101,7 +105,7 @@ async def fetch_catalog(config: LLMConfig) -> list[dict] | None:
     backend = active_backend(config)
     if backend == "bedrock":
         cache_key = f"bedrock:{config.region}:{config.aws_profile or ''}"
-    elif backend == "codex-cli":
+    elif backend in {"codex-cli", "claude-cli"}:
         return None
     else:
         cache_key = config.base_url
@@ -150,9 +154,9 @@ def build_options(backend: str, dynamic: list[dict] | None, purpose: str) -> lis
         provider = info.get("provider")
         if backend == "bedrock" and provider != "bedrock":
             continue
-        if backend == "codex-cli" and provider != "codex-cli":
+        if backend in {"codex-cli", "claude-cli"} and provider != backend:
             continue
-        if backend not in {"bedrock", "codex-cli"} and provider in {"bedrock", "codex-cli"}:
+        if backend not in _ISOLATED_BACKENDS and provider in _ISOLATED_BACKENDS:
             continue
         if purpose not in (info.get("purposes") or []):
             continue

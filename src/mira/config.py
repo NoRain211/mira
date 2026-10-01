@@ -84,6 +84,10 @@ class LLMConfig(BaseModel):
     codex_home: str | None = None
     codex_sandbox: Literal["read-only"] = "read-only"
     codex_timeout_seconds: int = Field(default=900, gt=0)
+    # Claude Code CLI provider settings. Auth comes from CLAUDE_CODE_OAUTH_TOKEN
+    # (`claude setup-token`, Claude Pro/Max); Mira does not need an Anthropic API key.
+    claude_command: str = "claude"
+    claude_timeout_seconds: int = Field(default=900, gt=0)
 
     @field_validator("base_url")
     @classmethod
@@ -350,6 +354,8 @@ _DEPLOYMENT_ONLY_LLM_KEYS = frozenset(
         "codex_home",
         "codex_sandbox",
         "codex_timeout_seconds",
+        "claude_command",
+        "claude_timeout_seconds",
     }
 )
 
