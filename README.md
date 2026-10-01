@@ -125,9 +125,22 @@ instead of an API key, using the same OAuth flows as [OpenCodex](https://github.
 Their models then appear in every model picker on **Settings → Models** (suffixed
 "(ChatGPT)" / "(Claude)"), mixed freely with API-key models per purpose. Lists are live,
 several accounts per provider are supported (**Manage** → **Use**), and tokens refresh
-automatically. Credentials are stored owner-only in `MIRA_INDEX_DIR/_llm_auth/accounts.json`.
+automatically. Each account shows its 5-hour and weekly usage; an account that hits its
+limit is skipped for the next signed-in one. Credentials are stored owner-only in
+`MIRA_INDEX_DIR/_llm_auth/accounts.json`, encrypted when `MIRA_SECRET_KEY` is set (any long
+random string; keep it, or sign in again after changing it).
 Both flows reuse the official Codex / Claude Code OAuth clients, as OpenCodex does; check
 that this fits your plan's terms before relying on it.
+
+On **Settings > Models** each model can list fallbacks, tried in order when it fails (for
+example Claude, then ChatGPT, then an API model). Two optional review settings live there too:
+a **Critic Model** for the self-critique pass, and **Second-opinion Models** that also review
+each PR and keep only findings most models agree on. Both are off by default; on a small
+benchmark sample neither beat the default setup, and one second opinion halved recall.
+
+Reviews also run ruff's bug-only rules (syntax errors, undefined names) on changed Python
+files, point out existing tests the PR leaves untouched, and review files skipped on large
+PRs automatically (`review.auto_review_rest_rounds`, default 2).
 
 ### Codex CLI
 
