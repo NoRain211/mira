@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { useParams } from "react-router"
+import { Link, useParams } from "react-router"
 
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
@@ -419,9 +419,12 @@ export function SettingsPage() {
           <CardContent className="space-y-4">
             {missingApiKey && (
               <p className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
-                Only subscription models are listed. Set the{" "}
-                <code className="font-mono">{missingApiKey}</code> environment
-                variable to also use API models.
+                Connect API-key or local providers under{" "}
+                <Link to="/settings/providers" className="underline">
+                  Providers
+                </Link>{" "}
+                to add their models. The server&apos;s default endpoint also
+                needs <code className="font-mono">{missingApiKey}</code>.
               </p>
             )}
             <div className="space-y-2">

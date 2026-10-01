@@ -64,8 +64,8 @@ _rate_limited_until: dict[str, float] = {}
 # ── Storage ──────────────────────────────────────────────────────────
 
 
-def _store_path() -> Path:
-    return Path(os.environ.get("MIRA_INDEX_DIR", "./data/indexes")) / "_llm_auth" / "accounts.json"
+def _store_path(name: str = "accounts.json") -> Path:
+    return Path(os.environ.get("MIRA_INDEX_DIR", "./data/indexes")) / "_llm_auth" / name
 
 
 def _fernet():  # type: ignore[no-untyped-def]
@@ -78,9 +78,10 @@ def _fernet():  # type: ignore[no-untyped-def]
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
 
 
-def _load() -> dict[str, list[dict]]:
+def read_store(name: str) -> dict:
+    """Decrypted JSON from an _llm_auth store file ({} when missing)."""
     try:
-        raw = _store_path().read_bytes()
+        raw = _store_path(name).read_bytes()
     except FileNotFoundError:
         raw = b"{}"
     # Plain JSON files (written before MIRA_SECRET_KEY was set) still load; the next save encrypts.
@@ -98,12 +99,16 @@ def _load() -> dict[str, list[dict]]:
                 provider="Subscription",
                 detail="stored accounts are encrypted with a different MIRA_SECRET_KEY",
             ) from None
-    data = json.loads(raw)
+    return json.loads(raw)
+
+
+def _load() -> dict[str, list[dict]]:
+    data = read_store("accounts.json")
     return {p: list(data.get(p, [])) for p in PROVIDERS}
 
 
-def _save(data: dict[str, list[dict]]) -> None:
-    path = _store_path()
+def _save(data: dict, name: str = "accounts.json") -> None:
+    path = _store_path(name)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     payload = json.dumps(data).encode()
     if fernet := _fernet():

@@ -185,22 +185,35 @@ _SUBSCRIPTIONS = {"chatgpt": ("chatgpt/", "ChatGPT"), "anthropic": ("claude/", "
 
 
 async def subscription_options() -> list[dict]:
-    """Models from every signed-in subscription account, prefixed so create_llm routes them."""
-    from mira.llm import oauth_accounts
+    """Models from every signed-in subscription account and connected API/local provider,
+    prefixed so create_llm routes them."""
+    from mira.llm import api_providers, oauth_accounts
 
+    sources = [
+        (account, prefix, name, lambda a=account: oauth_accounts.list_models(a))
+        for account, (prefix, name) in _SUBSCRIPTIONS.items()
+        if oauth_accounts.has_account(account)
+    ]
+    for p in api_providers.public():
+        sources.append(
+            (
+                f"api:{p['id']}",
+                f"@{p['id']}/",
+                p["label"],
+                lambda pid=p["id"]: api_providers.list_models(api_providers.get(pid) or {}),
+            )
+        )
     out: list[dict] = []
-    for account, (prefix, name) in _SUBSCRIPTIONS.items():
-        if not oauth_accounts.has_account(account):
-            continue
-        hit = _cache.get(account)
+    for cache_key, prefix, name, fetch in sources:
+        hit = _cache.get(cache_key)
         ttl = _CATALOG_TTL if hit and hit[1] is not None else _FAILURE_TTL
         if hit is None or time.time() - hit[0] >= ttl:
             try:
-                models: list[dict] | None = await oauth_accounts.list_models(account)
+                models: list[dict] | None = await fetch()
             except Exception as exc:
                 logger.warning("%s model list failed: %s", name, exc)
                 models = None
-            hit = _cache[account] = (time.time(), models)
+            hit = _cache[cache_key] = (time.time(), models)
         out += [
             {"value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
             for m in hit[1] or []
