@@ -293,17 +293,44 @@ async def list_models(provider: str) -> list[dict]:
                 f"{ANTHROPIC_API}/v1/models?limit=100", headers=anthropic_headers(account["access"])
             )
             resp.raise_for_status()
-            return [
-                {"value": m["id"], "label": m.get("display_name") or m["id"]}
-                for m in resp.json().get("data", [])
-            ]
+            out = []
+            for m in resp.json().get("data", []):
+                capabilities = m.get("capabilities") or {}
+                effort = capabilities.get("effort") or {}
+                thinking = capabilities.get("thinking") or {}
+                levels = None
+                if effort.get("supported"):
+                    levels = [
+                        "off",
+                        *(
+                            key
+                            for key, value in effort.items()
+                            if isinstance(value, dict) and value.get("supported")
+                        ),
+                    ]
+                elif thinking.get("supported") is False:
+                    levels = ["off"]
+                out.append(
+                    {
+                        "value": m["id"],
+                        "label": m.get("display_name") or m["id"],
+                        "reasoning_levels": levels,
+                    }
+                )
+            return out
         resp = await client.get(
             f"{CHATGPT_API}/models?client_version={CODEX_CLIENT_VERSION}",
             headers=chatgpt_headers(account),
         )
         resp.raise_for_status()
         return [
-            {"value": m["slug"], "label": m.get("display_name") or m["slug"]}
+            {
+                "value": m["slug"],
+                "label": m.get("display_name") or m["slug"],
+                "reasoning_levels": ["off", *(e["effort"] for e in m["supported_reasoning_levels"])]
+                if m.get("supported_reasoning_levels") is not None
+                else None,
+            }
             for m in resp.json().get("models", [])
             if m.get("visibility", "list") == "list"
         ]

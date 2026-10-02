@@ -45,9 +45,12 @@ def test_vendor_slash_model_id_reaches_provider_unchanged():
 
 
 def test_openrouter_keeps_vendor_prefix():
-    _, sent, headers = _sent("@openrouter/anthropic/claude-sonnet-4.6")
+    llm, sent, headers = _sent("@openrouter/anthropic/claude-sonnet-4.6#max")
     assert sent == "anthropic/claude-sonnet-4.6"
     assert headers["Authorization"] == "Bearer or-key"
+    body = {}
+    llm._apply_reasoning(body)
+    assert body["reasoning"] == {"effort": "xhigh"}
 
 
 def test_keyless_local_provider_sends_no_auth():

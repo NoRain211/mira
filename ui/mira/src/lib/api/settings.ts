@@ -1,4 +1,5 @@
 import { deleteJson, fetchJson, postJson, putJson } from "./http"
+import type { ModelOption } from "@/components/model-combobox"
 
 export type LlmAccount = {
   id: string
@@ -90,18 +91,15 @@ export const settingsApi = {
       config_indexing_model: string
       config_review_model: string
       config_security_model: string
-      indexing_options: {
-        value: string
-        label: string
-        recommended?: boolean
-      }[]
-      review_options: { value: string; label: string; recommended?: boolean }[]
-      security_options: {
-        value: string
-        label: string
-        recommended?: boolean
-      }[]
+      security_inherits_review: boolean
+      indexing_options: ModelOption[]
+      review_options: ModelOption[]
+      security_options: ModelOption[]
       review_thinking_mode: string
+      indexing_reasoning: string
+      security_reasoning: string
+      critique_reasoning: string
+      reasoning_overrides: Record<string, string>
       thinking_options: {
         value: string
         label: string
@@ -125,7 +123,7 @@ export const settingsApi = {
     indexing_model: string,
     review_model: string,
     security_model: string,
-    review_thinking_mode: string = "off",
+    review_thinking_mode: string = "",
     api_style: string = "chat",
     extra?: {
       indexing_fallbacks: string[]
@@ -133,6 +131,9 @@ export const settingsApi = {
       security_fallbacks: string[]
       critique_model: string
       ensemble_models: string[]
+      indexing_reasoning: string
+      security_reasoning: string
+      critique_reasoning: string
     }
   ) =>
     putJson<{ ok: boolean }>("/api/settings/models", {

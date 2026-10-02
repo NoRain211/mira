@@ -72,10 +72,17 @@ async def _fetch_openai_style(config: LLMConfig, tools_only: bool) -> list[dict]
         resp = await client.get(f"{config.base_url.rstrip('/')}/models", headers=headers)
     resp.raise_for_status()
     out = []
+    effort_map = profiles.resolve(config.base_url).get("reasoning_effort_map", {})
     for m in resp.json().get("data", []):
         if tools_only and "tools" not in (m.get("supported_parameters") or []):
             continue
-        out.append({"value": m["id"], "label": m.get("name") or m["id"]})
+        out.append(
+            {
+                "value": m["id"],
+                "label": m.get("name") or m["id"],
+                "reasoning_levels": registry.reasoning_levels(m, effort_map),
+            }
+        )
     return out
 
 
@@ -181,12 +188,22 @@ def build_options(backend: str, dynamic: list[dict] | None, purpose: str) -> lis
                 "value": model_id,
                 "label": info.get("label", model_id),
                 "recommended": purpose in (info.get("recommended_for") or []),
+                "reasoning_levels": info.get("reasoning_levels"),
             }
         )
     if dynamic is not None:
+        by_id = {_norm(d["value"]): d for d in dynamic}
+        for option in options:
+            live = by_id.get(_norm(option["value"]), {})
+            if live.get("reasoning_levels") is not None:
+                option["reasoning_levels"] = live["reasoning_levels"]
         seen = {_norm(o["value"]) for o in options}
         options += [{**d, "recommended": False} for d in dynamic if _norm(d["value"]) not in seen]
     options.sort(key=lambda m: (not m["recommended"], m["label"].lower()))
+    if backend == "bedrock":
+        for option in options:
+            if "anthropic." in option["value"]:
+                option["reasoning_levels"] = ["off", "low", "medium", "high", "max"]
     return options
 
 
@@ -214,7 +231,7 @@ async def subscription_options() -> list[dict]:
         )
     results = await asyncio.gather(*(_cached(key, fetch, name) for key, _, name, fetch in sources))
     return [
-        {"value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
+        {**m, "value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
         for (_, prefix, name, _), models in zip(sources, results, strict=True)
         for m in models or []
     ]
