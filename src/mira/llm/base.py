@@ -29,11 +29,17 @@ class LLMProviderProtocol(Protocol):
         supports_tool_calling: Provider supports function/tool calling.
     """
 
-    supports_json_mode: bool
-    supports_tool_calling: bool
-
-    total_prompt_tokens: int
-    total_completion_tokens: int
+    # Read-only to callers; providers may implement these as plain or class attributes.
+    @property
+    def config(self) -> LLMConfig: ...
+    @property
+    def supports_json_mode(self) -> bool: ...
+    @property
+    def supports_tool_calling(self) -> bool: ...
+    @property
+    def total_prompt_tokens(self) -> int: ...
+    @property
+    def total_completion_tokens(self) -> int: ...
 
     async def complete(
         self,
