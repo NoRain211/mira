@@ -81,6 +81,24 @@ class TestSetModelsInheritAndCustom:
         assert in_memory_db.get_setting("review_model") == "openai/gpt-5.1-codex-mini"
         assert llm_config_for("review", LLMConfig()).model == "openai/gpt-5.1-codex-mini"
 
+    def test_save_is_one_write(self, in_memory_db: AppDatabase, monkeypatch: pytest.MonkeyPatch):
+        """A failed save must not leave new models next to stale fallbacks."""
+        in_memory_db.set_setting("review_model", "old/model")
+
+        def boom(values: dict[str, str]) -> None:
+            raise RuntimeError("disk full")
+
+        body = ModelsUpdate(indexing_model="", review_model="new/model", review_fallbacks=["x/y"])
+        with monkeypatch.context() as m, pytest.raises(RuntimeError):
+            m.setattr(in_memory_db, "set_settings", boom)
+            set_models(body, _admin_req())
+        assert in_memory_db.get_setting("review_model") == "old/model"
+        assert in_memory_db.get_setting("review_fallback_models") is None
+
+        in_memory_db.set_settings({"review_model": "new/model", "review_fallback_models": "x/y"})
+        assert in_memory_db.get_setting("review_model") == "new/model"
+        assert in_memory_db.get_setting("review_fallback_models") == "x/y"
+
 
 @pytest.fixture
 def no_catalog_fetch(monkeypatch: pytest.MonkeyPatch):

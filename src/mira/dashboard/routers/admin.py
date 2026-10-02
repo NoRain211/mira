@@ -301,34 +301,31 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
     # is stored as-is — the dashboard accepts the same free-form model ids as
     # mira.yaml (the dropdown still guides toward registry models), and the
     # registry falls back gracefully for pricing/limits of unknown ids.
-    _api._app_db.set_setting("indexing_model", body.indexing_model.strip())
-    _api._app_db.set_setting("review_model", body.review_model.strip())
-    _api._app_db.set_setting("security_model", body.security_model.strip())
+    settings = {
+        "indexing_model": body.indexing_model.strip(),
+        "review_model": body.review_model.strip(),
+        "security_model": body.security_model.strip(),
+    }
     for tier in ("indexing", "review", "security"):
         fallbacks = getattr(body, f"{tier}_fallbacks")
         if fallbacks is not None:
             ids = dict.fromkeys(m.strip() for m in fallbacks if m.strip() and "," not in m)
-            _api._app_db.set_setting(f"{tier}_fallback_models", ",".join(ids))
+            settings[f"{tier}_fallback_models"] = ",".join(ids)
     if body.critique_model is not None:
-        _api._app_db.set_setting("critique_model", body.critique_model.strip())
+        settings["critique_model"] = body.critique_model.strip()
     if body.ensemble_models is not None:
         ids = dict.fromkeys(m.strip() for m in body.ensemble_models if m.strip() and "," not in m)
-        _api._app_db.set_setting("ensemble_models", ",".join(ids))
+        settings["ensemble_models"] = ",".join(ids)
     # Clear "off" to "" rather than persisting the literal — "off" is the
     # default, and a stored value would shadow a mira.yaml
     # `review_reasoning_effort` override. "" (not None — the column is NOT NULL)
     # reads back as unset so the config fallback chain works.
-    if body.review_thinking_mode and body.review_thinking_mode != "off":
-        _api._app_db.set_setting("review_thinking_mode", body.review_thinking_mode)
-    else:
-        _api._app_db.set_setting("review_thinking_mode", "")
-
+    settings["review_thinking_mode"] = (
+        "" if body.review_thinking_mode in ("", "off") else body.review_thinking_mode
+    )
     # Clear "chat" (default) to "" so a stored value never shadows mira.yaml config overrides.
-    if body.api_style and body.api_style != "chat":
-        _api._app_db.set_setting("api_style", body.api_style)
-    else:
-        _api._app_db.set_setting("api_style", "")
-
+    settings["api_style"] = "" if body.api_style in ("", "chat") else body.api_style
+    _api._app_db.set_settings(settings)
     _api._app_db.mark_setup_complete()
     return {"ok": True}
 
