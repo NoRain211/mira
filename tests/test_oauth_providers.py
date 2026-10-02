@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from mira.config import LLMConfig
-from mira.llm import create_llm, oauth_accounts
+from mira.llm import create_llm, credential_store, oauth_accounts
 from mira.llm.anthropic_oauth import AnthropicOAuthProvider, _to_anthropic
 from mira.llm.chatgpt_oauth import ChatGPTOAuthProvider
 from mira.llm.tool_schemas import SUBMIT_REVIEW_TOOL
@@ -243,7 +243,7 @@ async def test_store_is_encrypted_with_secret_key_and_reads_old_plain_json(monke
     assert oauth_accounts._load()["chatgpt"][0]["email"] == "plain@x.com"
 
     await _add("chatgpt", email="new@x.com")
-    raw = oauth_accounts._store_path().read_bytes()
+    raw = credential_store.path("accounts.json").read_bytes()
     assert b"new@x.com" not in raw and b"tok" not in raw
     assert len(oauth_accounts._load()["chatgpt"]) == 2
 

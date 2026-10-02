@@ -136,6 +136,10 @@ LLM_ERROR_MESSAGES: dict[str, ErrorMessage] = {
         full="Provider {provider} is not connected (Settings → Providers)",
         safe="Provider {provider} is not connected",
     ),
+    "credentials_unreadable": ErrorMessage(
+        full="Saved provider credentials are encrypted with a different MIRA_SECRET_KEY",
+        safe="Saved provider credentials can't be read",
+    ),
 }
 
 
