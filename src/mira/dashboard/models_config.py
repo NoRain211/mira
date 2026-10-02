@@ -190,7 +190,8 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
         "reasoning_effort": thinking_mode,
         "api_style": resolved_style,
     }
-    if db_fallbacks:
+    # A saved "" is an explicit empty list; only a missing setting falls back to mira.yaml.
+    if db_fallbacks is not None:
         update["fallback_models"] = parse_fallbacks(db_fallbacks)
     return base.model_copy(update=update)
 
@@ -211,7 +212,8 @@ def _db_setting(key: str) -> str | None:
 
 def critique_config(base: LLMConfig) -> LLMConfig | None:
     """Config for a dedicated critic model (DB -> mira.yaml), or None to use the indexing tier."""
-    model = _db_setting("critique_model") or base.critique_model
+    stored = _db_setting("critique_model")
+    model = stored if stored is not None else base.critique_model
     if not model:
         return None
     return llm_config_for("indexing", base).model_copy(
@@ -222,7 +224,7 @@ def critique_config(base: LLMConfig) -> LLMConfig | None:
 def ensemble_configs(base: LLMConfig) -> list[LLMConfig]:
     """Review-tier configs for each second-opinion model (DB -> mira.yaml)."""
     stored = _db_setting("ensemble_models")
-    models = parse_fallbacks(stored) if stored else base.ensemble_models
+    models = parse_fallbacks(stored) if stored is not None else base.ensemble_models
     if not models:
         return []
     review = llm_config_for("review", base)
