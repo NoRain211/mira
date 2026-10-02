@@ -18,6 +18,7 @@ from pathlib import Path
 
 from mira.config import FilterConfig, LLMConfig, MiraConfig, ReviewConfig, load_config
 from mira.core.engine import ReviewEngine
+from mira.exceptions import LLMError
 from mira.llm import create_llm
 from mira.llm.base import LLMProviderProtocol
 from mira.providers.github import GitHubProvider
@@ -109,7 +110,15 @@ async def _run_one(
         duration_s = time.monotonic() - start
 
         if error is None:
-            judgement = await judge_pr(fixture, comments, judge_llm)
+            # A dropped judge stream shouldn't discard the (expensive) review it is grading.
+            for attempt in range(3):
+                try:
+                    judgement = await judge_pr(fixture, comments, judge_llm)
+                    break
+                except LLMError as exc:
+                    if attempt == 2:
+                        raise
+                    logger.warning("Judge failed for %s, retrying: %s", fixture["pr_url"], exc)
         else:
             # A crashed review misses everything it was supposed to find.
             judgement = JudgeResult(
