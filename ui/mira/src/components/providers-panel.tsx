@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useApiProviders } from "@/hooks/use-api-providers"
 
@@ -50,6 +51,14 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {providers.error && (
+          <p className="flex items-center gap-2 text-xs text-destructive">
+            Couldn't load providers: {providers.error}
+            <Button size="sm" variant="outline" onClick={providers.refresh}>
+              Retry
+            </Button>
+          </p>
+        )}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line">
             {TABS.map((t) => (

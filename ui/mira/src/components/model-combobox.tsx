@@ -43,7 +43,7 @@ function ComboboxItem({
 
 // Searchable model picker. Typing filters the backend's catalog; arrows +
 // Enter or click select; free-form ids commit via the "Use …" row. When
-// `configModel` is set, an "Inherit from deployment config" row is pinned
+// `configModel` is set, an inherit row (labeled by `inheritLabel`) is pinned
 // first and selecting it yields value "".
 export function ModelCombobox({
   value,

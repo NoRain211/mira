@@ -29,10 +29,13 @@ export function SetupPage() {
   const [indexingOptions, setIndexingOptions] = useState<ModelOption[]>([])
   const [reviewOptions, setReviewOptions] = useState<ModelOption[]>([])
 
-  const loadModels = () =>
+  // Provider changes refresh only the catalog so unsaved picks survive.
+  const loadModels = (withSelections = true) =>
     api.getModels().then((data) => {
-      setIndexingModel(data.indexing_source === "config" ? "" : data.indexing_model)
-      setReviewModel(data.review_source === "config" ? "" : data.review_model)
+      if (withSelections) {
+        setIndexingModel(data.indexing_source === "config" ? "" : data.indexing_model)
+        setReviewModel(data.review_source === "config" ? "" : data.review_model)
+      }
       setConfigIndexingModel(data.config_indexing_model)
       setConfigReviewModel(data.config_review_model)
       setIndexingOptions(data.indexing_options)
@@ -72,7 +75,7 @@ export function SetupPage() {
         </p>
       </div>
 
-      <ProvidersPanel onChanged={loadModels} />
+      <ProvidersPanel onChanged={() => loadModels(false)} />
 
       <Card>
         <CardHeader className="pb-3">
