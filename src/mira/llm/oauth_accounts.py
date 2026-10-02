@@ -13,18 +13,17 @@ import hashlib
 import html
 import json
 import logging
-import os
 import secrets
 import time
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
 from mira.exceptions import LLMError, NonRetriableLLMError
+from mira.llm import credential_store
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +52,6 @@ CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 CODEX_CLIENT_VERSION = "0.155.0"
 
 _DEVICE_TTL = 15 * 60
-# ponytail: one process-wide lock for refresh + file writes; fine for a single Mira replica.
-_lock = asyncio.Lock()
 _logins: dict[str, dict[str, Any]] = {}
 _callback_server: asyncio.Server | None = None
 # Account id -> time until which it is skipped after a 429 (in memory only).
@@ -63,61 +60,16 @@ _rate_limited_until: dict[str, float] = {}
 
 # ── Storage ──────────────────────────────────────────────────────────
 
-
-def _store_path(name: str = "accounts.json") -> Path:
-    return Path(os.environ.get("MIRA_INDEX_DIR", "./data/indexes")) / "_llm_auth" / name
-
-
-def _fernet():  # type: ignore[no-untyped-def]
-    """Cipher for accounts.json when MIRA_SECRET_KEY is set; None stores plain JSON."""
-    secret = os.environ.get("MIRA_SECRET_KEY")
-    if not secret:
-        return None
-    from cryptography.fernet import Fernet
-
-    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
-
-
-def read_store(name: str) -> dict:
-    """Decrypted JSON from an _llm_auth store file ({} when missing)."""
-    try:
-        raw = _store_path(name).read_bytes()
-    except FileNotFoundError:
-        raw = b"{}"
-    # Plain JSON files (written before MIRA_SECRET_KEY was set) still load; the next save encrypts.
-    if not raw.lstrip().startswith(b"{"):
-        from cryptography.fernet import InvalidToken
-
-        fernet = _fernet()
-        try:
-            if fernet is None:
-                raise InvalidToken
-            raw = fernet.decrypt(raw)
-        except InvalidToken:
-            raise LLMError(
-                "oauth_failed",
-                provider="Subscription",
-                detail="stored accounts are encrypted with a different MIRA_SECRET_KEY",
-            ) from None
-    return json.loads(raw)
+_STORE = "accounts.json"
 
 
 def _load() -> dict[str, list[dict]]:
-    data = read_store("accounts.json")
+    data = credential_store.read(_STORE)
     return {p: list(data.get(p, [])) for p in PROVIDERS}
 
 
-def _save(data: dict, name: str = "accounts.json") -> None:
-    path = _store_path(name)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    payload = json.dumps(data).encode()
-    if fernet := _fernet():
-        payload = fernet.encrypt(payload)
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(payload)
-    os.replace(tmp, path)
+def _save(data: dict) -> None:
+    credential_store.save(_STORE, data)
 
 
 def _active(accounts: list[dict]) -> dict | None:
@@ -168,7 +120,7 @@ def mark_rate_limited(account: dict, resp: httpx.Response) -> None:
 
 
 async def _add_account(provider: str, creds: dict) -> None:
-    async with _lock:
+    async with credential_store.lock:
         data = _load()
         accounts = [
             a
@@ -183,7 +135,7 @@ async def _add_account(provider: str, creds: dict) -> None:
 
 
 async def activate(provider: str, account_id: str) -> None:
-    async with _lock:
+    async with credential_store.lock:
         data = _load()
         if not any(a["id"] == account_id for a in data[provider]):
             raise KeyError(account_id)
@@ -194,7 +146,7 @@ async def activate(provider: str, account_id: str) -> None:
 
 async def remove(provider: str, account_id: str | None = None) -> None:
     """Remove one account, or every account for the provider when account_id is None."""
-    async with _lock:
+    async with credential_store.lock:
         data = _load()
         data[provider] = [a for a in data[provider] if account_id and a["id"] != account_id]
         _save(data)
@@ -274,7 +226,7 @@ async def _refresh(provider: str, account: dict) -> dict:
 async def access_token(provider: str, account_id: str | None = None) -> dict:
     """Return an account with a fresh token: account_id if given, else the active account
     (or the next signed-in one while the active account is rate limited)."""
-    async with _lock:
+    async with credential_store.lock:
         data = _load()
         active = _active(data[provider])
         if active is None:

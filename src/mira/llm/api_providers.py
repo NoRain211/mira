@@ -11,7 +11,7 @@ import re
 
 import httpx
 
-from mira.llm import oauth_accounts
+from mira.llm import credential_store
 
 _STORE = "api_providers.json"
 _LOCAL = "Use localhost instead of host.docker.internal when Mira runs outside Docker."
@@ -248,7 +248,7 @@ def slug(name: str) -> str:
 
 
 def _load() -> dict[str, dict]:
-    return oauth_accounts.read_store(_STORE)
+    return credential_store.read(_STORE)
 
 
 def get(provider_id: str) -> dict | None:
@@ -294,15 +294,15 @@ async def connect(provider_id: str, label: str, base_url: str, api_key: str) -> 
         "api_key": api_key.strip(),
     }
     count = len(await list_models(provider))
-    async with oauth_accounts._lock:
+    async with credential_store.lock:
         data = _load()
         data[provider_id] = provider
-        oauth_accounts._save(data, _STORE)
+        credential_store.save(_STORE, data)
     return count
 
 
 async def disconnect(provider_id: str) -> None:
-    async with oauth_accounts._lock:
+    async with credential_store.lock:
         data = _load()
         data.pop(provider_id, None)
-        oauth_accounts._save(data, _STORE)
+        credential_store.save(_STORE, data)

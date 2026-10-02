@@ -6,7 +6,7 @@ import pytest
 
 from mira.config import LLMConfig
 from mira.exceptions import NonRetriableLLMError
-from mira.llm import api_providers, create_llm, oauth_accounts
+from mira.llm import api_providers, create_llm, credential_store
 from mira.llm.base import _strip_model_prefix
 
 
@@ -14,7 +14,8 @@ from mira.llm.base import _strip_model_prefix
 def store(tmp_path, monkeypatch):
     monkeypatch.setenv("MIRA_INDEX_DIR", str(tmp_path))
     monkeypatch.delenv("MIRA_SECRET_KEY", raising=False)
-    oauth_accounts._save(
+    credential_store.save(
+        "api_providers.json",
         {
             "nvidia": {
                 "label": "NVIDIA NIM",
@@ -28,7 +29,6 @@ def store(tmp_path, monkeypatch):
             },
             "ollama": {"label": "Ollama", "base_url": "http://localhost:11434/v1", "api_key": ""},
         },
-        "api_providers.json",
     )
 
 
