@@ -352,6 +352,7 @@ class ModelOption(BaseModel):
     value: str
     label: str
     recommended: bool = False
+    reasoning_levels: list[str] | None = None
 
 
 class ModelsResponse(BaseModel):
@@ -366,11 +367,17 @@ class ModelsResponse(BaseModel):
     config_indexing_model: str
     config_review_model: str
     config_security_model: str
+    security_inherits_review: bool = True
     indexing_options: list[ModelOption]
     review_options: list[ModelOption]
     security_options: list[ModelOption]
     # Extended-thinking effort for reviews ("off"/"low"/"medium"/"high"/"xhigh"/"max").
     review_thinking_mode: str
+    indexing_reasoning: str = "off"
+    security_reasoning: str = "off"
+    critique_reasoning: str = "off"
+    # Raw overrides keep the form's Default choice distinct from effective values.
+    reasoning_overrides: dict[str, str] = {}
     thinking_options: list[ModelOption]
     # Protocol dialect for the OpenAI-compatible endpoint ("chat"/"responses"),
     # resolved DB → config → default. Mirrors review_thinking_mode.
@@ -391,7 +398,10 @@ class ModelsUpdate(BaseModel):
     indexing_model: str
     review_model: str
     security_model: str = ""
-    review_thinking_mode: str = "off"
+    review_thinking_mode: str = ""
+    indexing_reasoning: str | None = None
+    security_reasoning: str | None = None
+    critique_reasoning: str | None = None
     api_style: str = "chat"
     # None leaves the stored list untouched (the setup page saves models without them).
     indexing_fallbacks: list[str] | None = None

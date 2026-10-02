@@ -111,19 +111,38 @@ def create_llm(config: LLMConfig) -> LLMProviderProtocol:
     single: dict[str, Any] = {"fallback_model": None, "fallback_models": []}
     chain_models, providers = [], []
     for i, m in enumerate(models):
+        model = m
         try:
+            model, _ = parse_model_entry(m)
             providers.append(_create_one(config.model_copy(update={**single, "model": m})))
         except Exception as exc:
             if i == 0:
                 raise
             # An unusable fallback (e.g. a disconnected provider) must not block the primary.
-            logger.warning("Skipping fallback model %s: %s", m, exc)
+            logger.warning("Skipping fallback model %s: %s", model, exc)
             continue
-        chain_models.append(m)
+        chain_models.append(model)
     return ModelChain(chain_models, providers) if len(providers) > 1 else providers[0]
 
 
+def parse_model_entry(entry: str) -> tuple[str, str | None]:
+    """Split an optional #effort without exposing it to providers or model lookups."""
+    if "#" not in entry:
+        return entry, None
+    from mira.dashboard.models_config import THINKING_MODE_VALUES
+
+    model, _, effort = entry.partition("#")
+    if not model or effort not in THINKING_MODE_VALUES:
+        raise ValueError(f"Invalid model reasoning entry: {entry!r}")
+    return model, effort
+
+
 def _create_one(config: LLMConfig) -> LLMProviderProtocol:
+    model, effort = parse_model_entry(config.model)
+    if effort is not None:
+        config = config.model_copy(
+            update={"model": model, "reasoning_effort": None if effort == "off" else effort}
+        )
     for prefix, account in SUBSCRIPTION_PREFIXES.items():
         if config.model.startswith(prefix):
             sub = config.model_copy(update={"model": config.model.removeprefix(prefix)})
@@ -132,8 +151,9 @@ def _create_one(config: LLMConfig) -> LLMProviderProtocol:
 
                 return AnthropicOAuthProvider(sub)
             from mira.llm.chatgpt_oauth import ChatGPTOAuthProvider
+            from mira.llm.oauth_accounts import CHATGPT_API
 
-            return ChatGPTOAuthProvider(sub)
+            return ChatGPTOAuthProvider(sub.model_copy(update={"base_url": CHATGPT_API}))
 
     if config.model.startswith("@"):
         return _create_connected(config)

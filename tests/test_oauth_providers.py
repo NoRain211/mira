@@ -48,11 +48,14 @@ async def _add(provider: str, **creds) -> None:
 
 def test_model_prefix_routes_to_subscription_regardless_of_provider():
     claude = create_llm(LLMConfig(model="claude/claude-sonnet-x"))
-    chatgpt = create_llm(LLMConfig(provider="bedrock", model="chatgpt/gpt-6-sol"))
+    chatgpt = create_llm(LLMConfig(provider="bedrock", model="chatgpt/gpt-6-sol#max"))
     assert isinstance(claude, AnthropicOAuthProvider)
     assert (claude.config.model, claude.config.fallback_model) == ("claude-sonnet-x", None)
     assert isinstance(chatgpt, ChatGPTOAuthProvider)
     assert chatgpt.config.model == "gpt-6-sol"
+    body = {}
+    chatgpt._apply_reasoning(body)
+    assert body["reasoning"] == {"effort": "max"}
     assert not isinstance(
         create_llm(LLMConfig(model="anthropic/claude-sonnet-4.6")), AnthropicOAuthProvider
     )
@@ -64,14 +67,46 @@ async def test_subscription_options_list_only_signed_in_accounts(monkeypatch):
     model_catalog._cache.clear()
     await _add("chatgpt")
 
-    async def fake_list(account):
-        return [{"value": "gpt-6-sol", "label": "GPT-6-Sol"}]
-
-    monkeypatch.setattr(oauth_accounts, "list_models", fake_list)
+    _route(
+        monkeypatch,
+        lambda r: httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "slug": "gpt-6-sol",
+                        "display_name": "GPT-6-Sol",
+                        "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}],
+                    }
+                ],
+                "data": [
+                    {
+                        "id": "claude-sonnet-x",
+                        "capabilities": {
+                            "effort": {
+                                "supported": True,
+                                "high": {"supported": True},
+                                "max": {"supported": False},
+                            },
+                        },
+                    }
+                ],
+            },
+        ),
+    )
 
     assert await model_catalog.subscription_options() == [
-        {"value": "chatgpt/gpt-6-sol", "label": "GPT-6-Sol (ChatGPT)", "recommended": False}
+        {
+            "value": "chatgpt/gpt-6-sol",
+            "label": "GPT-6-Sol (ChatGPT)",
+            "recommended": False,
+            "reasoning_levels": ["off", "low", "high"],
+        }
     ]
+    await _add("anthropic")
+    options = await model_catalog.subscription_options()
+    assert options[-1]["value"] == "claude/claude-sonnet-x"
+    assert options[-1]["reasoning_levels"] == ["off", "high"]
 
 
 async def test_expired_token_is_refreshed_and_persisted(monkeypatch):
@@ -390,8 +425,8 @@ async def test_model_chain_falls_through_providers_and_cools_failed_model(monkey
     seen = _route(monkeypatch, handler)
     chain = create_llm(
         LLMConfig(
-            model="claude/claude-x",
-            fallback_models=["chatgpt/gpt-x"],
+            model="claude/claude-x#low",
+            fallback_models=["chatgpt/gpt-x#high"],
             max_retries=1,
         )
     )
@@ -400,3 +435,7 @@ async def test_model_chain_falls_through_providers_and_cools_failed_model(monkey
     assert json.loads(await chain.complete([{"role": "user", "content": "u"}])) == {"from": "gpt"}
     # The second call skips Claude while it cools down.
     assert [r.url.host for r in seen] == ["api.anthropic.com", "chatgpt.com", "chatgpt.com"]
+    assert list(llm._cooling_until) == ["claude/claude-x"]
+    assert json.loads(seen[0].content)["output_config"] == {"effort": "low"}
+    assert json.loads(seen[1].content)["reasoning"] == {"effort": "high"}
+    assert [json.loads(r.content)["model"] for r in seen] == ["claude-x", "gpt-x", "gpt-x"]

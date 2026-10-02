@@ -144,6 +144,14 @@ a **Critic Model** for the self-critique pass, and **Second-opinion Models** tha
 each PR and keep only findings most models agree on. Both are off by default; on a small
 benchmark sample neither beat the default setup, and one second opinion halved recall.
 
+Each model slot, fallback, and second opinion has a reasoning dropdown. **Default** uses
+`llm.review_reasoning_effort` for review, inherits review for security, and leaves indexing
+and the critic off. Fallbacks inherit their slot; second opinions inherit review. **Off**
+explicitly disables Mira's reasoning effort, even when a deployment default is set.
+List entries store an optional suffix such as `claude/claude-opus-5-5#high`; the same format
+works in `mira.yaml`'s `fallback_models` and `ensemble_models` lists. Available levels follow
+the provider's model metadata when supplied; unknown models keep the full list.
+
 Reviews also run ruff's bug-only rules (syntax errors, undefined names) on changed Python
 files, point out existing tests the PR leaves untouched, and review files skipped on large
 PRs automatically (`review.auto_review_rest_rounds`, default 2).

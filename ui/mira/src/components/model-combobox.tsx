@@ -6,6 +6,7 @@ export type ModelOption = {
   value: string
   label: string
   recommended?: boolean
+  reasoning_levels?: string[] | null
 }
 
 function ComboboxItem({

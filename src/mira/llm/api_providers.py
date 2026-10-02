@@ -280,8 +280,15 @@ async def list_models(provider: dict) -> list[dict]:
     rows = body if isinstance(body, list) else body.get("data") if isinstance(body, dict) else None
     if not isinstance(rows, list):
         raise ValueError("expected a model list or an object with a data list")
+    from mira.llm import provider_profiles, registry
+
+    effort_map = provider_profiles.resolve(provider["base_url"]).get("reasoning_effort_map", {})
     out = [
-        {"value": r["id"], "label": r.get("name") or r.get("display_name") or r["id"]}
+        {
+            "value": r["id"],
+            "label": r.get("name") or r.get("display_name") or r["id"],
+            "reasoning_levels": registry.reasoning_levels(r, effort_map),
+        }
         for r in rows
         if isinstance(r, dict) and r.get("id")
     ]

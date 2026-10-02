@@ -14,7 +14,7 @@ from mira.llm import registry
 
 logger = logging.getLogger(__name__)
 
-# Thinking-mode options for the review model. "off" disables extended thinking
+# Thinking-mode options for each model slot. "off" disables extended thinking
 # (today's behavior); low/medium/high/xhigh map to the provider's unified
 # ``reasoning.effort``; "max" is a top level remapped per provider (OpenRouter
 # sends it as "xhigh"). Single source for the dashboard dropdown and validation.
@@ -123,12 +123,9 @@ def get_security_model(
 def get_review_thinking_mode(config: LLMConfig, db_value: str | None = None) -> str | None:
     """Resolve the review thinking mode: DB → config.review_reasoning_effort → None.
 
-    A DB value of "off" or "" counts as unset and falls through to the
-    mira.yaml-level setting — saving the models form always writes this key
-    (default "off"), so a stored "off" must not permanently shadow a config
-    override. "off" anywhere normalizes to None ("no reasoning").
+    An empty DB value inherits mira.yaml; explicit "off" disables reasoning.
     """
-    resolved = db_value if (db_value and db_value != "off") else config.review_reasoning_effort
+    resolved = db_value or config.review_reasoning_effort
     if not resolved or resolved == "off":
         return None
     return resolved
@@ -151,7 +148,7 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
 
         if _app_db is not None:
             db_fallbacks = _app_db.get_setting(f"{purpose}_fallback_models")
-            if purpose == "security" and not db_fallbacks:
+            if purpose == "security" and db_fallbacks is None:
                 db_fallbacks = _app_db.get_setting("review_fallback_models")
             if purpose == "indexing":
                 db_model = _app_db.get_setting("indexing_model")
@@ -166,7 +163,6 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
     except Exception:
         pass  # DB not available — resolve from config fields alone
 
-    # Thinking mode only applies to reviews; other purposes leave it off.
     thinking_mode: str | None = None
     resolved_style = resolve_api_style(base, db_style)
     if purpose == "indexing":
@@ -182,6 +178,10 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
         thinking_mode = get_review_thinking_mode(base, db_thinking)
     else:
         return base.model_copy(update={"reasoning_effort": None, "api_style": resolved_style})
+
+    if purpose != "review":
+        effort = _db_setting(f"{purpose}_reasoning") or thinking_mode
+        thinking_mode = None if effort == "off" else effort
 
     source = "dashboard setting" if db_model else ("mira.yaml" if config_model else "default")
     logger.info("%s model: %s (source: %s)", purpose.capitalize(), resolved, source)
@@ -211,13 +211,21 @@ def _db_setting(key: str) -> str | None:
 
 
 def critique_config(base: LLMConfig) -> LLMConfig | None:
-    """Config for a dedicated critic model (DB -> mira.yaml), or None to use the indexing tier."""
+    """Critic config, or None when the indexing provider already has the same effort."""
     stored = _db_setting("critique_model")
     model = stored if stored is not None else base.critique_model
-    if not model:
+    indexing = llm_config_for("indexing", base)
+    effort = _db_setting("critique_reasoning") or None
+    effort = None if effort == "off" else effort
+    if not model and effort == indexing.reasoning_effort:
         return None
-    return llm_config_for("indexing", base).model_copy(
-        update={"model": model, "fallback_models": []}
+    return indexing.model_copy(
+        update={
+            "model": model or indexing.model,
+            "reasoning_effort": effort,
+            "fallback_model": None,
+            "fallback_models": [],
+        }
     )
 
 
@@ -228,4 +236,7 @@ def ensemble_configs(base: LLMConfig) -> list[LLMConfig]:
     if not models:
         return []
     review = llm_config_for("review", base)
-    return [review.model_copy(update={"model": m, "fallback_models": []}) for m in models]
+    return [
+        review.model_copy(update={"model": m, "fallback_model": None, "fallback_models": []})
+        for m in models
+    ]

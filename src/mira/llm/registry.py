@@ -73,6 +73,28 @@ def get(model_id: str) -> dict | None:
     return _load().get(model_id)
 
 
+def reasoning_levels(info: dict, effort_map: dict[str, str]) -> list[str] | None:
+    """Efforts advertised by an OpenAI-style catalog, including provider aliases."""
+    levels = (info.get("reasoning") or {}).get("supported_efforts")
+    if levels is not None:
+        return list(
+            dict.fromkeys(
+                [
+                    "off",
+                    *(
+                        level
+                        for level in [*levels, *effort_map]
+                        if effort_map.get(level, level) in levels
+                    ),
+                ]
+            )
+        )
+    parameters = info.get("supported_parameters")
+    if parameters is not None and not {"reasoning", "reasoning.effort"}.intersection(parameters):
+        return ["off"]
+    return info.get("reasoning_levels")
+
+
 def is_supported(model_id: str, purpose: str | None = None) -> bool:
     """``True`` iff ``model_id`` is in the registry. If ``purpose`` is given,
     additionally require that the model is allowed for that purpose
