@@ -162,11 +162,13 @@ async def get_models() -> ModelsResponse:
     from mira.dashboard.models_config import (
         API_STYLES,
         THINKING_MODES,
+        critique_config,
+        ensemble_configs,
         get_indexing_model,
         get_review_model,
         get_review_thinking_mode,
         get_security_model,
-        parse_fallbacks,
+        llm_config_for,
         resolve_api_style,
     )
 
@@ -211,12 +213,11 @@ async def get_models() -> ModelsResponse:
         api_style=api_style,
         api_style_options=[ModelOption(**m) for m in API_STYLES],
         missing_api_key=key_missing,
-        critique_model=_api._app_db.get_setting("critique_model") or "",
-        ensemble_models=parse_fallbacks(_api._app_db.get_setting("ensemble_models")),
+        # Effective values (dashboard setting, else mira.yaml) so the form shows what runs.
+        critique_model=getattr(critique_config(config.llm), "model", ""),
+        ensemble_models=[c.model for c in ensemble_configs(config.llm)],
         **{
-            f"{tier}_fallbacks": parse_fallbacks(
-                _api._app_db.get_setting(f"{tier}_fallback_models")
-            )
+            f"{tier}_fallbacks": llm_config_for(tier, config.llm).fallback_models
             for tier in ("indexing", "review", "security")
         },
     )
