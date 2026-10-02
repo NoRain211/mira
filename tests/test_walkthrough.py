@@ -230,7 +230,7 @@ class TestParseWalkthroughResponse:
 
     def test_capitalized_group_keys_accepted(self):
         raw = json.dumps(
-            {"summary": "s", "change_groups": [{"Label": "Core", "Files": [{"path": "a.py"}]}]}
+            {"summary": "s", "change_groups": [{"Label": "Core", "Files": [{"Path": "a.py"}]}]}
         )
         result = parse_walkthrough_response(raw)
         assert result.change_groups[0].label == "Core"
