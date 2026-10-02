@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -117,27 +118,35 @@ async def fetch_catalog(config: LLMConfig) -> list[dict] | None:
     else:
         cache_key = config.base_url
 
-    def cached() -> tuple[float, list[dict] | None] | None:
-        hit = _cache.get(cache_key)
-        if hit is None:
-            return None
-        ttl = _CATALOG_TTL if hit[1] is not None else _FAILURE_TTL
-        return hit if time.time() - hit[0] < ttl else None
+    async def fetch() -> list[dict]:
+        if backend == "bedrock":
+            return await asyncio.to_thread(_fetch_bedrock_sync, config)
+        return await _fetch_openai_style(config, tools_only=backend == "openrouter")
 
-    if (hit := cached()) is not None:
+    return await _cached(cache_key, fetch, backend)
+
+
+def _fresh(cache_key: str) -> tuple[float, list[dict] | None] | None:
+    hit = _cache.get(cache_key)
+    if hit is None:
+        return None
+    ttl = _CATALOG_TTL if hit[1] is not None else _FAILURE_TTL
+    return hit if time.time() - hit[0] < ttl else None
+
+
+async def _cached(
+    cache_key: str, fetch: Callable[[], Awaitable[list[dict]]], name: str
+) -> list[dict] | None:
+    """Run fetch through the TTL cache; the per-key lock coalesces concurrent cold fetches."""
+    if (hit := _fresh(cache_key)) is not None:
         return hit[1]
     async with _locks[cache_key]:
-        if (hit := cached()) is not None:
+        if (hit := _fresh(cache_key)) is not None:
             return hit[1]
         try:
-            if backend == "bedrock":
-                models = await asyncio.to_thread(_fetch_bedrock_sync, config)
-            elif backend == "openrouter":
-                models = await _fetch_openai_style(config, tools_only=True)
-            else:
-                models = await _fetch_openai_style(config, tools_only=False)
+            models: list[dict] | None = await fetch()
         except Exception as exc:
-            logger.warning("Model catalog fetch failed (%s): %s", backend, exc)
+            logger.warning("%s model list failed: %s", name, exc)
             models = None
         _cache[cache_key] = (time.time(), models)
         return models
@@ -203,19 +212,9 @@ async def subscription_options() -> list[dict]:
                 lambda pid=p["id"]: api_providers.list_models(api_providers.get(pid) or {}),
             )
         )
-    out: list[dict] = []
-    for cache_key, prefix, name, fetch in sources:
-        hit = _cache.get(cache_key)
-        ttl = _CATALOG_TTL if hit and hit[1] is not None else _FAILURE_TTL
-        if hit is None or time.time() - hit[0] >= ttl:
-            try:
-                models: list[dict] | None = await fetch()
-            except Exception as exc:
-                logger.warning("%s model list failed: %s", name, exc)
-                models = None
-            hit = _cache[cache_key] = (time.time(), models)
-        out += [
-            {"value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
-            for m in hit[1] or []
-        ]
-    return out
+    results = await asyncio.gather(*(_cached(key, fetch, name) for key, _, name, fetch in sources))
+    return [
+        {"value": prefix + m["value"], "label": f"{m['label']} ({name})", "recommended": False}
+        for (_, prefix, name, _), models in zip(sources, results, strict=True)
+        for m in models or []
+    ]
