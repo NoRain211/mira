@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from mira.config import LLMConfig
 from mira.exceptions import NonRetriableLLMError
 from mira.llm.base import LLMProviderProtocol
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 # Model-id prefixes routed to a signed-in subscription account instead of config.provider,
 # so one deployment can mix API-key and ChatGPT/Claude subscription models per purpose.
@@ -27,7 +30,7 @@ class ModelChain:
     def __init__(self, models: list[str], providers: list[LLMProviderProtocol]) -> None:
         self.models = models
         self.providers = providers
-        self.config = providers[0].config  # type: ignore[attr-defined]
+        self.config = providers[0].config
         self.supports_json_mode = providers[0].supports_json_mode
         self.supports_tool_calling = all(p.supports_tool_calling for p in providers)
 
@@ -51,7 +54,7 @@ class ModelChain:
     def count_tokens(self, text: str) -> int:
         return self.providers[0].count_tokens(text)
 
-    async def _run(self, method: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+    async def _run(self, call: Callable[[LLMProviderProtocol], Awaitable[T]]) -> T:
         now = time.time()
         # Stable sort: healthy models keep their order, recently failed ones go last.
         order = sorted(
@@ -60,7 +63,7 @@ class ModelChain:
         last: Exception | None = None
         for i in order:
             try:
-                return await getattr(self.providers[i], method)(*args, **kwargs)
+                return await call(self.providers[i])
             except Exception as exc:
                 last = exc
                 if not isinstance(exc, NonRetriableLLMError):
@@ -69,20 +72,33 @@ class ModelChain:
         assert last is not None
         raise last
 
-    async def complete(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return await self._run("complete", *args, **kwargs)
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        json_mode: bool = True,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        return await self._run(lambda p: p.complete(messages, json_mode, temperature, max_tokens))
 
-    async def complete_with_tools(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return await self._run("complete_with_tools", *args, **kwargs)
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict],
+        temperature: float | None = None,
+    ) -> str:
+        return await self._run(lambda p: p.complete_with_tools(messages, tools, temperature))
 
-    async def complete_agentic(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return await self._run("complete_agentic", *args, **kwargs)
+    async def complete_agentic(
+        self, messages: list, tools: list[dict], temperature: float | None = None
+    ) -> dict:
+        return await self._run(lambda p: p.complete_agentic(messages, tools, temperature))
 
-    async def review(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return await self._run("review", *args, **kwargs)
+    async def review(self, messages: list[dict[str, str]], temperature: float | None = None) -> str:
+        return await self._run(lambda p: p.review(messages, temperature))
 
-    async def walkthrough(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return await self._run("walkthrough", *args, **kwargs)
+    async def walkthrough(self, messages: list[dict[str, str]]) -> str:
+        return await self._run(lambda p: p.walkthrough(messages))
 
 
 def create_llm(config: LLMConfig) -> LLMProviderProtocol:
@@ -91,7 +107,7 @@ def create_llm(config: LLMConfig) -> LLMProviderProtocol:
     models = list(dict.fromkeys([config.model, *config.fallback_models, *extra]))
     if len(models) == 1:
         return _create_one(config)
-    single = {"fallback_model": None, "fallback_models": []}
+    single: dict[str, Any] = {"fallback_model": None, "fallback_models": []}
     return ModelChain(
         models, [_create_one(config.model_copy(update={**single, "model": m})) for m in models]
     )
