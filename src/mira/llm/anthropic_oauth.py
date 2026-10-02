@@ -177,6 +177,8 @@ class AnthropicOAuthProvider:
             if (
                 resp.status_code == 400
                 and "tool_choice" in resp.text
+                and isinstance(forced, dict)
+                and "name" in forced
                 and forced is body.get("tool_choice")
             ):
                 _NO_FORCED_TOOL.add(self.config.model)

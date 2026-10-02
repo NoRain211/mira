@@ -81,7 +81,8 @@ class LLMProviderProtocol(Protocol):
 def _get_api_key(config: LLMConfig, profile: dict | None = None) -> str:
     """Resolve the API key for the configured endpoint.
 
-    Reads `config.api_key_env` first, then the matched provider profile's
+    A direct `config.api_key` (set for providers connected in Settings) wins.
+    Otherwise reads `config.api_key_env`, then the matched provider profile's
     `api_key_env`, then the legacy `OPENROUTER_API_KEY` / `OPENAI_API_KEY`
     lookup for backward compatibility. If `api_key_env` is explicitly "" the
     empty string is returned without error — useful for local endpoints

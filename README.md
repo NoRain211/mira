@@ -125,7 +125,8 @@ instead of an API key, using the same OAuth flows as [OpenCodex](https://github.
   Groq, Cerebras, Gemini, OpenRouter, DeepSeek, Ollama, LM Studio, …). Paste a key (local ones
   need none) and Mira checks it by listing models. **Add a custom one** takes any other
   OpenAI-compatible base URL. Keys live in the same encrypted store as the sign-ins, and models
-  appear as `@<provider>/<model>`. From Docker, reach local servers via `host.docker.internal`.
+  appear as `@<provider>/<model>`. From Docker Desktop, reach local servers via
+  `host.docker.internal`; on Linux, start Mira with `--add-host=host.docker.internal:host-gateway`.
 
 Their models then appear in every model picker on **Settings → Models** (suffixed
 "(ChatGPT)" / "(Claude)"), mixed freely with API-key models per purpose. Lists are live,

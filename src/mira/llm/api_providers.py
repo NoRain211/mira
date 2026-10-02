@@ -277,7 +277,9 @@ async def list_models(provider: dict) -> list[dict]:
     resp.raise_for_status()
     body = resp.json()
     # Most return {"data": [...]}; Together returns a bare list.
-    rows = body if isinstance(body, list) else body.get("data") or []
+    rows = body if isinstance(body, list) else body.get("data") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("expected a model list or an object with a data list")
     out = [
         {"value": r["id"], "label": r.get("name") or r.get("display_name") or r["id"]}
         for r in rows

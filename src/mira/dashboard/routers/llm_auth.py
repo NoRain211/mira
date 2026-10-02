@@ -56,7 +56,7 @@ async def start_login(provider: str, request: Request) -> dict:
         if _account_key(provider) == "chatgpt":
             return await oauth_accounts.start_chatgpt_login()
         return await oauth_accounts.start_anthropic_login()
-    except LLMError as exc:
+    except (LLMError, httpx.HTTPError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -77,6 +77,8 @@ async def complete_anthropic(body: AnthropicCode, request: Request) -> dict:
         await oauth_accounts.complete_anthropic_login(body.login_id, body.code)
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Claude sign-in failed: {exc}") from exc
     _forget_catalog()
     return {"ok": True}
 

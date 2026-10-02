@@ -127,7 +127,9 @@ def pricing(model_id: str) -> tuple[float, float]:
     zero and a partial custom entry can't crash registry load.
     """
     info = get(model_id) or {}
-    if model_id.startswith(("chatgpt/", "claude/")):
+    from mira.llm import SUBSCRIPTION_PREFIXES
+
+    if model_id.startswith(tuple(SUBSCRIPTION_PREFIXES)):
         return (0.0, 0.0)  # subscription models: no per-token spend
     return (
         float(info.get("input_cost_per_1m", 3.00)),

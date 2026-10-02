@@ -33,7 +33,7 @@ def store(tmp_path, monkeypatch):
 
 
 def _sent(model: str):
-    llm = create_llm(LLMConfig(model=model, api_style="responses"))
+    llm = create_llm(LLMConfig(model=model, api_style="chat"))
     return llm, _strip_model_prefix(llm.config.model, llm.config.base_url), llm._build_headers()
 
 
@@ -59,6 +59,11 @@ def test_keyless_local_provider_sends_no_auth():
 def test_unknown_provider_fails_without_retry():
     with pytest.raises(NonRetriableLLMError):
         create_llm(LLMConfig(model="@nope/x"))
+
+
+def test_disconnected_fallback_does_not_block_primary():
+    llm = create_llm(LLMConfig(model="@nvidia/x", fallback_models=["@nope/y"]))
+    assert llm.config.base_url == "https://integrate.api.nvidia.com/v1"
 
 
 def test_key_never_serialized():
