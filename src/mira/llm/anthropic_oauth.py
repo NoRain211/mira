@@ -134,11 +134,14 @@ class AnthropicOAuthProvider:
         effort = self.config.reasoning_effort
         if effort and effort != "off":
             body.pop("temperature", None)  # thinking rejects custom temperatures
+            # Thinking counts against max_tokens; at a small configured cap it can use the
+            # whole budget and stop before the tool call or answer.
+            budget = _THINKING_BUDGET.get(effort, 8192)
+            floor = budget + 4096
+            body["max_tokens"] = max(int(body.get("max_tokens") or self.config.max_tokens), floor)  # type: ignore[call-overload]
             if self.config.model in _BUDGET_THINKING:
-                budget = _THINKING_BUDGET.get(effort, 8192)
                 body.pop("output_config", None)
                 body["thinking"] = {"type": "enabled", "budget_tokens": budget}
-                body["max_tokens"] = max(int(body.get("max_tokens") or 0), budget + 4096)  # type: ignore[call-overload]
             else:
                 body["thinking"] = {"type": "adaptive"}
                 body["output_config"] = {"effort": "low" if effort == "minimal" else effort}

@@ -328,6 +328,8 @@ async def test_claude_thinking_uses_adaptive_then_budget(monkeypatch):
     assert await provider.complete([{"role": "user", "content": "u"}]) == '{"ok": 1}'
     first, second = (json.loads(r.content) for r in seen)
     assert first["output_config"] == {"effort": "high"} and "temperature" not in first
+    # Adaptive thinking also needs room beyond the default 4096 cap to reach the answer.
+    assert first["max_tokens"] > 16384
     assert second["thinking"] == {"type": "enabled", "budget_tokens": 16384}
     assert "output_config" not in second and second["max_tokens"] > 16384
 
