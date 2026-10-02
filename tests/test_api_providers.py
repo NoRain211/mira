@@ -73,3 +73,15 @@ def test_key_never_serialized():
 
 def test_public_hides_keys():
     assert all("api_key" not in p for p in api_providers.public())
+
+
+def test_opencode_lists_only_chat_completions_models():
+    ids = ["glm-5.3", "big-pickle", "space-bunny-free", "gpt-6-sol", "claude-opus-5-5"]
+    ids += ["qwen3.8-max", "qwen3.6-plus", "jev-1.13-free", "muse-spark-1.3-contributor-free"]
+    keep = {
+        pid: [m for m in ids if api_providers._callable(pid, m)] for pid in api_providers._CHAT_ONLY
+    }
+    assert keep["opencode-zen"] == ["glm-5.3", "big-pickle", "space-bunny-free", "qwen3.8-max"]
+    assert keep["opencode-free"] == ["big-pickle", "space-bunny-free"]
+    assert keep["opencode-go"] == ["glm-5.3", "space-bunny-free"]
+    assert api_providers._callable("nvidia", "gpt-6-sol")

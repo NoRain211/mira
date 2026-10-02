@@ -209,7 +209,7 @@ async def subscription_options() -> list[dict]:
                 f"api:{p['id']}",
                 f"@{p['id']}/",
                 p["label"],
-                lambda pid=p["id"]: api_providers.list_models(api_providers.get(pid) or {}),
+                lambda pid=p["id"]: api_providers.list_models(api_providers.get(pid) or {}, pid),
             )
         )
     results = await asyncio.gather(*(_cached(key, fetch, name) for key, _, name, fetch in sources))
