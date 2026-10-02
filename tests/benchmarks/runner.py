@@ -18,7 +18,7 @@ from pathlib import Path
 
 from mira.config import FilterConfig, LLMConfig, MiraConfig, ReviewConfig, load_config
 from mira.core.engine import ReviewEngine
-from mira.exceptions import LLMError
+from mira.exceptions import LLMError, NonRetriableLLMError
 from mira.llm import create_llm
 from mira.llm.base import LLMProviderProtocol
 from mira.providers.github import GitHubProvider
@@ -109,18 +109,19 @@ async def _run_one(
             error = str(exc)
         duration_s = time.monotonic() - start
 
-        if error is None:
-            # A dropped judge stream shouldn't discard the (expensive) review it is grading.
-            for attempt in range(3):
-                try:
-                    judgement = await judge_pr(fixture, comments, judge_llm)
+        judgement: JudgeResult | None = None
+        # A dropped judge stream shouldn't discard the (expensive) review it is grading.
+        for attempt in range(3 if error is None else 0):
+            try:
+                judgement = await judge_pr(fixture, comments, judge_llm)
+                break
+            except LLMError as exc:
+                logger.warning("Judge failed for %s: %s", fixture["pr_url"], exc)
+                if isinstance(exc, NonRetriableLLMError) or attempt == 2:
+                    error = f"Judge failed: {exc}"
                     break
-                except LLMError as exc:
-                    if attempt == 2:
-                        raise
-                    logger.warning("Judge failed for %s, retrying: %s", fixture["pr_url"], exc)
-        else:
-            # A crashed review misses everything it was supposed to find.
+        if judgement is None:
+            # A crashed review (or judge) misses everything it was supposed to find.
             judgement = JudgeResult(
                 fn=len(fixture["findings"]), missed=[f["id"] for f in fixture["findings"]]
             )

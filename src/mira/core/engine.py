@@ -1263,7 +1263,7 @@ class ReviewEngine:
         # runs once; extras sample the plain review path.
         n_runs = self.config.review.ensemble_runs
         if self._second_opinions is None:
-            self._second_opinions = second_opinion_llms()
+            self._second_opinions = second_opinion_llms(self.config.llm)
         if self._second_opinions:
             n_runs = 1  # other models vote instead of same-model reruns
         if n_runs > 1 and not getattr(self.llm, "supports_temperature", True):
@@ -1388,6 +1388,7 @@ class ReviewEngine:
                     indexing_llm=self.indexing_llm,
                     diff_files=critique_files,
                     audit=audit,
+                    llm_config=self.config.llm,
                 )
             except Exception as exc:
                 logger.warning("Self-critique pass failed, keeping original comments: %s", exc)
@@ -1531,7 +1532,7 @@ class ReviewEngine:
                         code_context=(code_context_block or "")
                         + _untouched_tests_note(
                             [f.path for f in chunk.files],
-                            {f.path for f in filtered},
+                            set(all_paths),
                             self._agentic_repo_tree,
                         ),
                         learned_rules=learned_rules or None,
@@ -1745,13 +1746,21 @@ class ReviewEngine:
                 logger.warning("PR summary generation failed: %s", exc)
                 pr_summary_block = ""
 
+        # Second-opinion models run on their own providers; count their tokens too.
+        usage = self.llm.usage
+        if self._second_opinions:
+            usage = dict(usage)
+            for other in self._second_opinions:
+                for key, value in other.usage.items():
+                    usage[key] = usage.get(key, 0) + value
+
         return ReviewResult(
             comments=final_comments,
             key_issues=all_key_issues,
             summary=summary,
             pr_summary_block=pr_summary_block,
             reviewed_files=len(filtered),
-            token_usage=self.llm.usage,
+            token_usage=usage,
             walkthrough=walkthrough,
             reviewed_paths=selected_paths,
             skipped_paths=skipped_paths_only,

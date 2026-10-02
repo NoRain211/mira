@@ -40,7 +40,12 @@ async def lint_pass(files: list[FileDiff], fetcher) -> list[ReviewComment]:  # t
                 "--output-format", "json", tmp,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )  # fmt: skip
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
             diagnostics = json.loads(stdout or b"[]")
             root = Path(tmp).resolve()
             for d in diagnostics:
