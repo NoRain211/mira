@@ -128,6 +128,14 @@ PRESETS: list[dict] = [
         "Free trial keys.",
     ),
     _p(
+        "opencode-free",
+        "OpenCode Zen (free models)",
+        "free",
+        "https://opencode.ai/zen/v1",
+        "https://opencode.ai/auth",
+        "Zen's free models; a free Zen API key is still required.",
+    ),
+    _p(
         "openai",
         "OpenAI API",
         "paid",
@@ -213,6 +221,22 @@ PRESETS: list[dict] = [
         "https://app.baseten.co/settings/api_keys",
     ),
     _p(
+        "opencode-zen",
+        "OpenCode Zen",
+        "paid",
+        "https://opencode.ai/zen/v1",
+        "https://opencode.ai/auth",
+        "Pay as you go. Only chat-completions models are listed.",
+    ),
+    _p(
+        "opencode-go",
+        "OpenCode Go",
+        "paid",
+        "https://opencode.ai/zen/go/v1",
+        "https://opencode.ai/auth",
+        "Subscription. Only chat-completions models are listed.",
+    ),
+    _p(
         "ollama", "Ollama", "local", "http://host.docker.internal:11434/v1", note=_LOCAL, key="none"
     ),
     _p(
@@ -242,6 +266,25 @@ PRESETS: list[dict] = [
     ),
 ]
 
+# OpenCode serves some families only on /responses or /messages; Mira calls /chat/completions.
+# ponytail: family prefixes from opencode.ai/docs (zen, go); update when they add families.
+_ZEN_CHAT = ("deepseek-", "glm-", "kimi-", "minimax-", "qwen3.8-max", "mimo-", "longcat-")
+_ZEN_CHAT += ("ling-", "nemotron-", "space-bunny", "big-pickle")
+_CHAT_ONLY = {
+    "opencode-zen": _ZEN_CHAT,
+    "opencode-free": _ZEN_CHAT,
+    "opencode-go": ("deepseek-", "glm-", "kimi-", "mimo-", "longcat-", "hy", "space-bunny"),
+}
+
+
+def _callable(pid: str, model: str) -> bool:
+    prefixes = _CHAT_ONLY.get(pid)
+    if prefixes is None:
+        return True
+    if pid == "opencode-free" and not (model.endswith("-free") or model == "big-pickle"):
+        return False
+    return model.startswith(prefixes)
+
 
 def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
@@ -268,7 +311,7 @@ def public() -> list[dict]:
     ]
 
 
-async def list_models(provider: dict) -> list[dict]:
+async def list_models(provider: dict, pid: str = "") -> list[dict]:
     """GET {base_url}/models -> [{value, label}]. Raises on HTTP or shape errors."""
     key = provider.get("api_key")
     headers = {"Authorization": f"Bearer {key}"} if key else {}
@@ -290,7 +333,7 @@ async def list_models(provider: dict) -> list[dict]:
             "reasoning_levels": registry.reasoning_levels(r, effort_map),
         }
         for r in rows
-        if isinstance(r, dict) and r.get("id")
+        if isinstance(r, dict) and r.get("id") and _callable(pid, r["id"])
     ]
     return sorted(out, key=lambda m: m["label"].lower())
 
@@ -302,7 +345,7 @@ async def connect(provider_id: str, label: str, base_url: str, api_key: str) -> 
         "base_url": base_url.strip().rstrip("/"),
         "api_key": api_key.strip(),
     }
-    count = len(await list_models(provider))
+    count = len(await list_models(provider, provider_id))
     async with credential_store.lock:
         data = _load()
         data[provider_id] = provider
