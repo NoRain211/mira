@@ -12,6 +12,37 @@ import { ProviderIcon } from "./shared"
 
 // API-key and local providers: presets, connected rows, and the custom form.
 
+function DisconnectButton({
+  id,
+  onChanged,
+}: {
+  id: string
+  onChanged: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const disconnect = async () => {
+    setBusy(true)
+    setError("")
+    try {
+      await api.disconnectApiProvider(id)
+      onChanged()
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="text-right">
+      <Button size="sm" variant="outline" disabled={busy} onClick={disconnect}>
+        Disconnect
+      </Button>
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
 function ConnectForm({
   preset,
   onDone,
@@ -144,13 +175,7 @@ export function PresetRow({
           )}
         </div>
         {connected ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => api.disconnectApiProvider(preset.id).then(onChanged)}
-          >
-            Disconnect
-          </Button>
+          <DisconnectButton id={preset.id} onChanged={onChanged} />
         ) : (
           <Button
             size="sm"
@@ -191,13 +216,7 @@ export function ConnectedProviderRow({
           {provider.has_key ? " · API key" : ""}
         </div>
       </div>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => api.disconnectApiProvider(provider.id).then(onChanged)}
-      >
-        Disconnect
-      </Button>
+      <DisconnectButton id={provider.id} onChanged={onChanged} />
     </div>
   )
 }

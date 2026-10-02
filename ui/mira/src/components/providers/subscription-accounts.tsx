@@ -16,9 +16,10 @@ import { ProviderIcon } from "./shared"
 
 // Subscription sign-in (ChatGPT device code, Claude PKCE), account switching, and usage.
 
-const ROWS: { key: LlmAccountProvider; name: string }[] = [
-  { key: "chatgpt", name: "OpenAI (Codex login)" },
-  { key: "anthropic", name: "Anthropic (Claude)" },
+// `search` holds extra terms so "chatgpt" finds the OpenAI row.
+const ROWS: { key: LlmAccountProvider; name: string; search: string }[] = [
+  { key: "chatgpt", name: "OpenAI (Codex login)", search: "chatgpt" },
+  { key: "anthropic", name: "Anthropic (Claude)", search: "" },
 ]
 
 type Login = { loginId: string; url: string; code?: string; error?: string }
@@ -245,9 +246,16 @@ export function SubscriptionAccounts({
     Partial<Record<LlmAccountProvider, Login>>
   >({})
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
 
   const load = useCallback(() => {
-    api.getLlmAccounts().then(setAccounts)
+    api.getLlmAccounts().then(
+      (a) => {
+        setAccounts(a)
+        setError("")
+      },
+      (e) => setError(`Couldn't load accounts: ${errorText(e)}`)
+    )
     api
       .getLlmUsage()
       .then((r) => setUsage(r.usage))
@@ -302,21 +310,29 @@ export function SubscriptionAccounts({
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
+    setError("")
     try {
       await fn()
-      refresh()
+    } catch (e) {
+      setError(errorText(e))
     } finally {
       setBusy(false)
+      refresh()
     }
   }
 
-  const rows = ROWS.filter((r) => r.name.toLowerCase().includes(query))
+  const rows = ROWS.filter((r) =>
+    `${r.name} ${r.search}`.toLowerCase().includes(query)
+  )
   return (
     <>
+      {error && <p className="text-xs text-destructive">{error}</p>}
       {rows.map((row) => {
         const list = accounts?.accounts[row.key] ?? []
         const active = list.find((a) => a.active) ?? list[0]
         const login = logins[row.key]
+        // A second click would replace the pending flow and stop polling it.
+        const loginPending = Boolean(login && !login.error)
         return (
           <div key={row.key} className="rounded-lg border bg-muted/30 p-3">
             <div className="flex items-center gap-3">
@@ -324,7 +340,11 @@ export function SubscriptionAccounts({
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{row.name}</div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {active ? active.email || "Signed in" : "Not logged in"}
+                  {active
+                    ? active.email || "Signed in"
+                    : accounts
+                      ? "Not logged in"
+                      : "Status unavailable"}
                   {active?.rate_limited && <RateLimited />}
                 </div>
               </div>
@@ -342,7 +362,7 @@ export function SubscriptionAccounts({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || loginPending}
                     onClick={() => startLogin(row.key)}
                   >
                     Add account
@@ -359,7 +379,7 @@ export function SubscriptionAccounts({
               ) : (
                 <Button
                   size="sm"
-                  disabled={busy}
+                  disabled={busy || loginPending}
                   onClick={() => startLogin(row.key)}
                 >
                   Log in

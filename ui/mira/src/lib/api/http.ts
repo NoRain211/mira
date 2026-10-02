@@ -8,8 +8,14 @@ export const API_BASE = import.meta.env.VITE_API_URL || ""
 // Errors below read "API error <status>: <body>"; show FastAPI's detail when present.
 export function errorText(e: unknown) {
   const msg = e instanceof Error ? e.message : String(e)
-  const m = msg.match(/"detail":\s*"([^"]+)"/)
-  return m ? m[1] : msg
+  try {
+    const { detail } = JSON.parse(msg.replace(/^API error \d+: /, ""))
+    if (detail)
+      return typeof detail === "string" ? detail : JSON.stringify(detail)
+  } catch {
+    /* not JSON */
+  }
+  return msg
 }
 
 export async function fetchJson<T>(path: string): Promise<T> {

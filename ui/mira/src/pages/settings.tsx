@@ -120,19 +120,21 @@ export function SettingsPage() {
   // bucket for non-field errors.
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
-  const loadModels = () =>
+  // Provider changes refresh only the catalog so unsaved picks survive.
+  const loadModels = (withSelections = true) =>
     api.getModels().then((m) => {
+      setBackend(m.backend)
+      setMissingApiKey(m.missing_api_key ?? "")
+      setIndexingOptions(m.indexing_options)
+      setReviewOptions(m.review_options)
+      setSecurityOptions(m.security_options)
+      if (!withSelections) return
       setIndexingModel(m.indexing_source === "config" ? "" : m.indexing_model)
       setReviewModel(m.review_source === "config" ? "" : m.review_model)
       setSecurityModel(m.security_source === "config" ? "" : m.security_model)
       setConfigIndexingModel(m.config_indexing_model)
       setConfigReviewModel(m.config_review_model)
       setConfigSecurityModel(m.config_security_model)
-      setBackend(m.backend)
-      setMissingApiKey(m.missing_api_key ?? "")
-      setIndexingOptions(m.indexing_options)
-      setReviewOptions(m.review_options)
-      setSecurityOptions(m.security_options)
       setThinkingMode(m.review_thinking_mode)
       setThinkingOptions(m.thinking_options)
       setApiStyle(m.api_style ?? "chat")
@@ -398,7 +400,9 @@ export function SettingsPage() {
         </p>
       </div>
 
-      {section === "providers" && <ProvidersPanel />}
+      {section === "providers" && (
+        <ProvidersPanel onChanged={() => loadModels(false)} />
+      )}
 
       {section === "models" && (
         <Card>
