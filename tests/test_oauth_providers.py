@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from mira.config import LLMConfig
+from mira.exceptions import NonRetriableLLMError
 from mira.llm import create_llm, credential_store, oauth_accounts
 from mira.llm.anthropic_oauth import AnthropicOAuthProvider, _to_anthropic
 from mira.llm.chatgpt_oauth import ChatGPTOAuthProvider
@@ -122,6 +123,11 @@ async def test_claude_paste_accepts_redirect_url(monkeypatch):
             },
         ),
     )
+
+    async def _no_server() -> None:
+        return None
+
+    monkeypatch.setattr(oauth_accounts, "_ensure_callback_server", _no_server)
     login = await oauth_accounts.start_anthropic_login()
     url = f"http://localhost:54545/callback?code=abc&state={login['login_id']}"
 
@@ -233,7 +239,7 @@ async def test_chatgpt_streams_and_moves_system_to_instructions(monkeypatch):
 
 
 async def test_not_signed_in_raises():
-    with pytest.raises(Exception, match="Not signed in to Claude"):
+    with pytest.raises(NonRetriableLLMError, match="Not signed in to Claude"):
         await oauth_accounts.access_token("anthropic")
 
 
@@ -248,8 +254,10 @@ async def test_store_is_encrypted_with_secret_key_and_reads_old_plain_json(monke
     assert len(oauth_accounts._load()["chatgpt"]) == 2
 
     monkeypatch.setenv("MIRA_SECRET_KEY", "wrong")
-    with pytest.raises(Exception, match="different MIRA_SECRET_KEY"):
-        oauth_accounts._load()
+    # A store from another key reads as empty, so signing in again replaces it.
+    assert not oauth_accounts._load().get("chatgpt")
+    await _add("chatgpt", email="again@x.com")
+    assert [a["email"] for a in oauth_accounts._load()["chatgpt"]] == ["again@x.com"]
 
 
 async def test_usage_reads_both_providers(monkeypatch):
@@ -312,6 +320,16 @@ async def test_claude_falls_back_to_auto_tool_choice(monkeypatch):
     assert json.loads(await provider.review([{"role": "user", "content": "u"}])) == {"a": 1}
     assert json.loads(await provider.review([{"role": "user", "content": "u"}])) == {"a": 1}
     assert len(seen) == 3  # the second call goes straight to auto
+
+
+async def test_claude_auto_tool_choice_rejection_is_not_retried(monkeypatch):
+    await _add("anthropic")
+    seen = _route(monkeypatch, lambda r: httpx.Response(400, text="tool_choice: bad"))
+    provider = AnthropicOAuthProvider(LLMConfig(model="claude-x"))
+
+    with pytest.raises(NonRetriableLLMError):
+        await provider.complete_agentic([{"role": "user", "content": "u"}], [SUBMIT_REVIEW_TOOL])
+    assert len(seen) == 1
 
 
 async def test_claude_thinking_uses_adaptive_then_budget(monkeypatch):

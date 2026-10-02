@@ -10,10 +10,11 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 
-from mira.exceptions import LLMError
+logger = logging.getLogger(__name__)
 
 # ponytail: one process-wide lock for read-modify-write cycles; fine for a single Mira replica.
 lock = asyncio.Lock()
@@ -33,7 +34,11 @@ def _fernet():  # type: ignore[no-untyped-def]
 
 
 def read(name: str) -> dict:
-    """Decrypted JSON from a store file ({} when missing)."""
+    """Decrypted JSON from a store file ({} when missing or unreadable).
+
+    An unreadable store (MIRA_SECRET_KEY changed or removed) reads as empty, so users
+    can sign in again; the next save replaces the old file.
+    """
     try:
         raw = path(name).read_bytes()
     except FileNotFoundError:
@@ -47,7 +52,8 @@ def read(name: str) -> dict:
                 raise InvalidToken
             raw = fernet.decrypt(raw)
         except InvalidToken:
-            raise LLMError("credentials_unreadable") from None
+            logger.warning("Cannot decrypt %s with MIRA_SECRET_KEY; treating it as empty", name)
+            return {}
     return json.loads(raw)
 
 
