@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import ClassVar, Protocol, runtime_checkable
 
 import httpx
@@ -182,6 +183,12 @@ class OpenAICompatibleProvider:
         if key:
             headers["Authorization"] = f"Bearer {key}"
         headers.update(self.profile.get("extra_headers", {}))
+        if "://opencode.ai/" in self.config.base_url:
+            # OpenCode Go rejects requests without these: opencode.ai/docs/go/#where-can-i-use-it
+            from mira import __version__
+
+            headers["User-Agent"] = f"mira/{__version__}"
+            headers["x-opencode-session"] = uuid.uuid4().hex  # cached: one session per provider
         self._cached_headers = headers
         return dict(headers)
 
