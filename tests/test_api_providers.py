@@ -28,6 +28,11 @@ def store(tmp_path, monkeypatch):
                 "api_key": "or-key",
             },
             "ollama": {"label": "Ollama", "base_url": "http://localhost:11434/v1", "api_key": ""},
+            "opencode-go": {
+                "label": "OpenCode Go",
+                "base_url": "https://opencode.ai/zen/go/v1",
+                "api_key": "oc-key",
+            },
         },
     )
 
@@ -76,6 +81,14 @@ def test_key_never_serialized():
 
 def test_public_hides_keys():
     assert all("api_key" not in p for p in api_providers.public())
+
+
+def test_opencode_gets_mira_user_agent_and_stable_session():
+    llm, sent, headers = _sent("@opencode-go/glm-5.3")
+    assert sent == "glm-5.3"
+    assert headers["User-Agent"].startswith("mira/")
+    assert headers["x-opencode-session"] == llm._build_headers()["x-opencode-session"]
+    assert "x-opencode-session" not in _sent("@nvidia/x")[2]
 
 
 def test_opencode_lists_only_chat_completions_models():
