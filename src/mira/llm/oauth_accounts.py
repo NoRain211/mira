@@ -53,6 +53,7 @@ CODEX_CLIENT_VERSION = "0.155.0"
 
 _DEVICE_TTL = 15 * 60
 _logins: dict[str, dict[str, Any]] = {}
+_poll_tasks: set[asyncio.Task] = set()  # the loop only holds weak refs to tasks
 _callback_server: asyncio.Server | None = None
 # Account id -> time until which it is skipped after a 429 (in memory only).
 _rate_limited_until: dict[str, float] = {}
@@ -418,7 +419,9 @@ async def start_chatgpt_login() -> dict:
         interval = 5.0
     login_id = secrets.token_urlsafe(12)
     _logins[login_id] = {"status": "pending"}
-    asyncio.create_task(_poll_chatgpt(login_id, device_id, user_code, interval))
+    task = asyncio.create_task(_poll_chatgpt(login_id, device_id, user_code, interval))
+    _poll_tasks.add(task)
+    task.add_done_callback(_poll_tasks.discard)
     return {"login_id": login_id, "url": CHATGPT_VERIFICATION_URL, "code": user_code}
 
 
