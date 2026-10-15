@@ -801,6 +801,45 @@ class TestResponseDiagnostics:
         return mock_client
 
     @pytest.mark.asyncio
+    async def test_empty_response_reports_finish_reason_and_usage(self):
+        # max_retries=1: no_tool_call is retriable, so keep the test to one call.
+        provider = LLMProvider(LLMConfig(model="m", max_retries=1))
+        empty = _mock_httpx_response(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "content": None,
+                            "reasoning_content": "x" * 50,
+                            "tool_calls": None,
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 65536,
+                    "completion_tokens_details": {"reasoning_tokens": 65530},
+                },
+            }
+        )
+
+        with (
+            patch("mira.llm.provider.httpx.AsyncClient") as cls,
+            pytest.raises(LLMError) as excinfo,
+        ):
+            cls.return_value = self._client([empty])
+            await provider.complete_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[self._TOOL]
+            )
+
+        message = str(excinfo.value)
+        assert "finish_reason=length" in message
+        assert "reasoning_len=50" in message
+        assert "reasoning_tokens=65530" in message
+        assert "x" * 50 not in message  # reasoning text never appears
+
+    @pytest.mark.asyncio
     async def test_transport_error_is_logged_and_propagated(self, caplog):
         provider = LLMProvider(LLMConfig(model="m", max_retries=1))
         client = AsyncMock()
