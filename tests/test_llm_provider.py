@@ -718,3 +718,68 @@ class TestReasoningFallback:
 
         assert len(posts) == 1  # no wasted reasoning attempt
         assert "reasoning" not in posts[0].kwargs["json"]
+
+
+class TestReasoningOffPayload:
+    """``off`` must actively disable thinking on endpoints that think by
+    default (DeepSeek), not merely omit the field."""
+
+    _TOOL = {"type": "function", "function": {"name": "submit_review", "parameters": {}}}
+
+    def _client(self, responses):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=responses)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_deepseek_off_sends_explicit_disable(self):
+        provider = LLMProvider(
+            LLMConfig(model="deepseek-v4-pro", base_url="https://api.deepseek.com/v1")
+        )
+        ok = _mock_httpx_response(_make_tool_response_json('{"comments": []}'))
+
+        with patch("mira.llm.provider.httpx.AsyncClient") as cls:
+            cls.return_value = self._client([ok])
+            await provider.complete_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[self._TOOL]
+            )
+            sent = cls.return_value.post.call_args_list[0].kwargs["json"]
+
+        assert sent["thinking"] == {"type": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_other_endpoint_off_omits_thinking(self):
+        provider = LLMProvider(LLMConfig(model="some/model"))  # default base_url
+        ok = _mock_httpx_response(_make_tool_response_json('{"comments": []}'))
+
+        with patch("mira.llm.provider.httpx.AsyncClient") as cls:
+            cls.return_value = self._client([ok])
+            await provider.complete_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[self._TOOL]
+            )
+            sent = cls.return_value.post.call_args_list[0].kwargs["json"]
+
+        assert "thinking" not in sent
+
+    @pytest.mark.asyncio
+    async def test_reasoning_level_still_sends_effort(self):
+        provider = LLMProvider(
+            LLMConfig(
+                model="deepseek-v4-pro",
+                base_url="https://api.deepseek.com/v1",
+                reasoning_effort="high",
+            )
+        )
+        ok = _mock_httpx_response(_make_tool_response_json('{"comments": []}'))
+
+        with patch("mira.llm.provider.httpx.AsyncClient") as cls:
+            cls.return_value = self._client([ok])
+            await provider.complete_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[self._TOOL]
+            )
+            sent = cls.return_value.post.call_args_list[0].kwargs["json"]
+
+        assert sent["reasoning"] == {"effort": "high"}
+        assert "thinking" not in sent
