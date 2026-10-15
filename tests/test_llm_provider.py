@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from mira.config import LLMConfig
@@ -783,3 +785,38 @@ class TestReasoningOffPayload:
 
         assert sent["reasoning"] == {"effort": "high"}
         assert "thinking" not in sent
+
+
+class TestResponseDiagnostics:
+    """``no_tool_call`` must carry the response shape on the error, not discard
+    it — counts only, never reasoning text."""
+
+    _TOOL = {"type": "function", "function": {"name": "submit_review", "parameters": {}}}
+
+    def _client(self, responses):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=responses)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_transport_error_is_logged_and_propagated(self, caplog):
+        provider = LLMProvider(LLMConfig(model="m", max_retries=1))
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=httpx.ReadError("connection dropped"))
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="mira.llm.provider"),
+            patch("mira.llm.provider.httpx.AsyncClient", return_value=client),
+            pytest.raises(LLMError),
+        ):
+            await provider.complete_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[self._TOOL]
+            )
+
+        log = "\n".join(r.getMessage() for r in caplog.records)
+        assert "transport error" in log
+        assert "ReadError" in log

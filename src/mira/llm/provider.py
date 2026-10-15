@@ -9,6 +9,7 @@ other OpenAI-compatible endpoint works off the portable default, no entry needed
 from __future__ import annotations
 
 import logging
+import time
 from typing import ClassVar
 
 import httpx
@@ -108,11 +109,28 @@ class LLMProvider(OpenAICompatibleProvider):
         self._apply_reasoning(body)
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-            resp = await client.post(
-                self._chat_url(),
-                headers=self._build_headers(),
-                json=body,
-            )
+            started = time.monotonic()
+            try:
+                resp = await client.post(
+                    self._chat_url(),
+                    headers=self._build_headers(),
+                    json=body,
+                )
+            except Exception as exc:
+                # Transport-level failures (drops, resets) carry no HTTP status
+                # or body, so record the context that is otherwise discarded.
+                logger.warning(
+                    "LLM transport error for %s at %s after %.0fms "
+                    "(timeout=%ss, reasoning=%s): %s: %s",
+                    api_model,
+                    self._chat_url(),
+                    (time.monotonic() - started) * 1000,
+                    self.config.request_timeout,
+                    "reasoning" in body,
+                    type(exc).__name__,
+                    exc,
+                )
+                raise
             if (
                 resp.status_code == 400
                 and body["tool_choice"] != "auto"
