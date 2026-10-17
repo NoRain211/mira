@@ -843,9 +843,12 @@ class GitHubProvider(BaseProvider):
         return threads
 
     async def get_pr_description(self, pr_info: PRInfo) -> str:
+        token = await self._resolve_token()
+        gh = self._make_client(token)
+
         @_retry_transient
         def _fetch() -> str:
-            gh_repo = self._github.get_repo(f"{pr_info.owner}/{pr_info.repo}")
+            gh_repo = gh.get_repo(f"{pr_info.owner}/{pr_info.repo}")
             return gh_repo.get_pull(pr_info.number).body or ""
 
         try:
@@ -856,9 +859,12 @@ class GitHubProvider(BaseProvider):
             raise ProviderError(f"Failed to fetch PR description: {e}") from e
 
     async def update_pr_description(self, pr_info: PRInfo, body: str) -> None:
+        token = await self._resolve_token()
+        gh = self._make_client(token)
+
         @_retry_transient
         def _edit() -> None:
-            gh_repo = self._github.get_repo(f"{pr_info.owner}/{pr_info.repo}")
+            gh_repo = gh.get_repo(f"{pr_info.owner}/{pr_info.repo}")
             gh_repo.get_pull(pr_info.number).edit(body=body)
 
         try:
