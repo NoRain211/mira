@@ -397,7 +397,7 @@ class GlobalSettingsUpdate(BaseModel):
 
 # Only `filter` and `review` are admin-editable from the UI; LLM creds and
 # DB settings stay env-only and would be silently overwritten if exposed
-# here.
+# here. `commands` is deliberately deployment-config-only (`mira.yaml`).
 _ALLOWED_OVERRIDE_SECTIONS = {"filter", "review"}
 
 
