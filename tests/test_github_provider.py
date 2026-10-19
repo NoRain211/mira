@@ -22,6 +22,7 @@ from mira.providers.github import (
     GitHubProvider,
     _async_constant,
     _format_comment_body,
+    _normalize_permission,
     parse_pr_url,
 )
 
@@ -65,6 +66,49 @@ class TestGitHubProvider:
     def test_requires_token(self):
         with pytest.raises(ProviderError, match="token is required"):
             GitHubProvider(token="")
+
+
+class TestGetRepoPermission:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raw", "normalized"),
+        [
+            ("admin", "write"),
+            ("maintain", "write"),
+            ("push", "write"),
+            ("write", "write"),
+            ("triage", "read"),
+            ("pull", "read"),
+            ("read", "read"),
+            ("none", "none"),
+            ("unexpected", None),
+        ],
+    )
+    async def test_normalizes_permission_levels(self, raw, normalized):
+        assert _normalize_permission(raw) == normalized
+
+    @pytest.mark.asyncio
+    async def test_fetches_collaborator_permission(self):
+        provider = GitHubProvider("token")
+        repo = MagicMock()
+        repo.get_collaborator_permission.return_value = "admin"
+        provider._make_client = MagicMock(
+            return_value=MagicMock(get_repo=MagicMock(return_value=repo))
+        )
+
+        assert await provider.get_repo_permission("o", "r", "alice") == "write"
+        repo.get_collaborator_permission.assert_called_once_with("alice")
+
+    @pytest.mark.asyncio
+    async def test_missing_collaborator_is_none(self):
+        provider = GitHubProvider("token")
+        repo = MagicMock()
+        repo.get_collaborator_permission.side_effect = GithubException(404, {}, {})
+        provider._make_client = MagicMock(
+            return_value=MagicMock(get_repo=MagicMock(return_value=repo))
+        )
+
+        assert await provider.get_repo_permission("o", "r", "alice") == "none"
 
 
 def _make_pr_info() -> PRInfo:
