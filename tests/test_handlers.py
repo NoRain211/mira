@@ -478,6 +478,7 @@ async def test_handle_thread_reject_resolves_for_each_keyword(
 ) -> None:
     """Each reject keyword resolves the thread."""
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_thread_id_for_comment = AsyncMock(return_value="PRRT_123")
     mock_provider.resolve_threads = AsyncMock(return_value=1)
     mock_provider_cls.return_value = mock_provider
@@ -500,6 +501,7 @@ async def test_handle_thread_reject_exits_early_for_non_reject_command(
 ) -> None:
     """Non-reject commands are ignored."""
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider_cls.return_value = mock_provider
 
     payload = _make_review_comment_payload("@mira-bot review")
@@ -515,6 +517,7 @@ async def test_handle_thread_reject_thread_not_found(
 ) -> None:
     """Handles thread-not-found gracefully (no resolve attempt)."""
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_thread_id_for_comment = AsyncMock(return_value=None)
     mock_provider_cls.return_value = mock_provider
 
@@ -533,6 +536,7 @@ async def test_handle_thread_reject_resolve_failure_posts_reply(
 ) -> None:
     """When resolve_threads raises, logs a warning and posts a failure reply."""
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_thread_id_for_comment = AsyncMock(return_value="PRRT_123")
     mock_provider.resolve_threads = AsyncMock(side_effect=RuntimeError("network down"))
     mock_provider.post_comment = AsyncMock()
@@ -555,6 +559,7 @@ async def test_handle_thread_reject_exception_logged_not_raised(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Exceptions in reject handler are logged, not propagated."""
+    mock_provider_cls.return_value.get_repo_permission = AsyncMock(return_value="write")
     mock_provider_cls.return_value.get_thread_id_for_comment = AsyncMock(
         side_effect=RuntimeError("boom")
     )
@@ -567,6 +572,25 @@ async def test_handle_thread_reject_exception_logged_not_raised(
         )
 
     assert "boom" in caplog.text
+
+
+@patch("mira.platforms.github.webhook.create_provider")
+async def test_handle_thread_reject_denies_read_only_user(
+    mock_provider_cls: MagicMock,
+    mock_app_auth: AsyncMock,
+) -> None:
+    """Thread reject is gated by the command policy too."""
+    mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="read")
+    mock_provider.get_thread_id_for_comment = AsyncMock(return_value="PRRT_123")
+    mock_provider.resolve_threads = AsyncMock(return_value=1)
+    mock_provider_cls.return_value = mock_provider
+
+    payload = _make_review_comment_payload("@mira-bot reject")
+    await handle_thread_reject(payload, mock_app_auth, "mira-bot")
+
+    mock_provider.get_thread_id_for_comment.assert_not_awaited()
+    mock_provider.resolve_threads.assert_not_awaited()
 
 
 # ── handle_pause_resume tests ───────────────────────────────────────────────
@@ -594,6 +618,7 @@ async def test_handle_pause_adds_label_and_posts_comment(
     mock_app_auth: AsyncMock,
 ) -> None:
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider_cls.return_value = mock_provider
 
     await handle_pause_resume(_make_pause_comment_payload(), mock_app_auth, "mira-bot", "pause")
@@ -614,6 +639,7 @@ async def test_handle_resume_removes_label_and_posts_comment(
     mock_app_auth: AsyncMock,
 ) -> None:
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider_cls.return_value = mock_provider
 
     await handle_pause_resume(_make_pause_comment_payload(), mock_app_auth, "mira-bot", "resume")
@@ -628,11 +654,27 @@ async def test_handle_resume_removes_label_and_posts_comment(
 
 
 @patch("mira.platforms.github.webhook.create_provider")
+async def test_handle_pause_denies_read_only_user(
+    mock_provider_cls: MagicMock,
+    mock_app_auth: AsyncMock,
+) -> None:
+    mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="read")
+    mock_provider_cls.return_value = mock_provider
+
+    await handle_pause_resume(_make_pause_comment_payload(), mock_app_auth, "mira-bot", "pause")
+
+    mock_provider.add_label.assert_not_awaited()
+    mock_provider.post_comment.assert_not_awaited()
+
+
+@patch("mira.platforms.github.webhook.create_provider")
 async def test_handle_pause_exception_logged_not_raised(
     mock_provider_cls: MagicMock,
     mock_app_auth: AsyncMock,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    mock_provider_cls.return_value.get_repo_permission = AsyncMock(return_value="write")
     mock_provider_cls.return_value.add_label = AsyncMock(side_effect=RuntimeError("boom"))
 
     with caplog.at_level(logging.ERROR):
