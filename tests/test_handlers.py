@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from mira.config import CommandsConfig, MiraConfig
 from mira.models import PRInfo, ReviewComment, ReviewResult, Severity
 from mira.platforms.github.webhook import (
     handle_comment,
@@ -15,7 +16,7 @@ from mira.platforms.github.webhook import (
     handle_pull_request,
     handle_thread_reject,
 )
-from mira.platforms.handlers import _REJECT_KEYWORDS
+from mira.platforms.handlers import _REJECT_KEYWORDS, classify_command
 
 
 def _make_pr_payload() -> dict[str, Any]:
@@ -28,6 +29,40 @@ def _make_pr_payload() -> dict[str, Any]:
             "name": "testrepo",
         },
     }
+
+
+class TestClassifyCommand:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("@mira review", "review"),
+            ("@mira Review", "review"),
+            ("@mira review-rest", "review_rest"),
+            ("@mira review rest", "review_rest"),
+            ("@mira rest", "review_rest"),
+            ("@mira continue", "review_rest"),
+            ("@mira help", "help"),
+            ("@mira ?", "help"),
+            ("@mira commands", "help"),
+            ("@mira pause", "pause"),
+            ("@mira resume", "resume"),
+            ("@mira why is this slow?", "ask"),
+            ("@mira reject", "ask"),
+        ],
+    )
+    def test_classifies_top_level_commands(self, text: str, expected: str):
+        assert classify_command(text, ["mira"]) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("@mira reject", "reject"),
+            ("@mira dismiss", "reject"),
+            ("@mira are you sure?", "ask"),
+        ],
+    )
+    def test_classifies_inline_thread_commands(self, text: str, expected: str):
+        assert classify_command(text, ["mira"], inline=True) == expected
 
 
 def _make_comment_payload(body: str) -> dict[str, Any]:
@@ -230,7 +265,8 @@ async def test_handle_comment_review_keyword(
     mock_app_auth: AsyncMock,
 ) -> None:
     """'review' keyword triggers full review_pr."""
-    mock_config.return_value = MagicMock()
+    mock_config.return_value = MiraConfig()
+    mock_provider_cls.return_value.get_repo_permission = AsyncMock(return_value="write")
     mock_engine = AsyncMock()
     mock_engine.review_pr = AsyncMock(return_value=ReviewResult(summary="ok"))
     mock_engine_cls.return_value = mock_engine
@@ -255,12 +291,13 @@ async def test_handle_comment_help_posts_command_list(
 ) -> None:
     """`@bot help` (and its aliases `?` / `commands`, case-insensitive) posts a
     help comment and exits without invoking the review engine or the LLM."""
-    mock_config.return_value = MagicMock()
+    mock_config.return_value = MiraConfig()
     mock_llm = AsyncMock()
     mock_llm.complete = AsyncMock()  # should NOT be called
     mock_llm_cls.return_value = mock_llm
 
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_pr_info = AsyncMock(return_value=mock_pr_info)
     mock_provider.post_comment = AsyncMock()
     mock_provider_cls.return_value = mock_provider
@@ -288,12 +325,13 @@ async def test_handle_comment_question(
     mock_pr_info: PRInfo,
 ) -> None:
     """A question triggers conversational reply via llm.complete(json_mode=False)."""
-    mock_config.return_value = MagicMock()
+    mock_config.return_value = MiraConfig()
     mock_llm = AsyncMock()
     mock_llm.complete = AsyncMock(return_value="Because of the nested loop.")
     mock_llm_cls.return_value = mock_llm
 
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_pr_info = AsyncMock(return_value=mock_pr_info)
     mock_provider.get_pr_diff = AsyncMock(return_value="diff content")
     mock_provider.post_comment = AsyncMock()
@@ -320,12 +358,13 @@ async def test_handle_comment_formats_reply_with_attribution(
     mock_pr_info: PRInfo,
 ) -> None:
     """Reply includes '> @user asked:' attribution prefix."""
-    mock_config.return_value = MagicMock()
+    mock_config.return_value = MiraConfig()
     mock_llm = AsyncMock()
     mock_llm.complete = AsyncMock(return_value="It's an O(n^2) loop.")
     mock_llm_cls.return_value = mock_llm
 
     mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="write")
     mock_provider.get_pr_info = AsyncMock(return_value=mock_pr_info)
     mock_provider.get_pr_diff = AsyncMock(return_value="diff")
     mock_provider.post_comment = AsyncMock()
@@ -337,6 +376,62 @@ async def test_handle_comment_formats_reply_with_attribution(
     posted_body = mock_provider.post_comment.call_args[0][1]
     assert posted_body.startswith("> @alice asked: why is this slow?")
     assert "O(n^2)" in posted_body
+
+
+@patch("mira.platforms.github.webhook.create_provider")
+@patch("mira.platforms.handlers.create_llm")
+@patch("mira.platforms.handlers.load_config")
+async def test_handle_comment_denies_read_only_user(
+    mock_config: MagicMock,
+    mock_llm_cls: MagicMock,
+    mock_provider_cls: MagicMock,
+    mock_app_auth: AsyncMock,
+) -> None:
+    """A read-only user cannot spend review credits by default."""
+    mock_config.return_value = MiraConfig()
+
+    mock_llm = AsyncMock()
+    mock_llm_cls.return_value = mock_llm
+
+    mock_provider = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="read")
+    mock_provider_cls.return_value = mock_provider
+
+    payload = _make_comment_payload("@mira-bot why is this slow?")
+    await handle_comment(payload, mock_app_auth, "mira-bot")
+
+    mock_llm.complete.assert_not_awaited()
+    mock_provider.post_comment.assert_not_awaited()
+
+
+@patch("mira.platforms.github.webhook.create_provider")
+@patch("mira.platforms.handlers.create_llm")
+@patch("mira.platforms.handlers.load_config")
+async def test_handle_comment_allows_explicitly_allowlisted_user(
+    mock_config: MagicMock,
+    mock_llm_cls: MagicMock,
+    mock_provider_cls: MagicMock,
+    mock_app_auth: AsyncMock,
+    mock_pr_info: PRInfo,
+) -> None:
+    """An explicit allowlist entry grants access to read-only users."""
+    mock_config.return_value = MiraConfig(commands=CommandsConfig(allowed_users=["alice"]))
+    mock_llm = AsyncMock()
+    mock_llm.complete = AsyncMock(return_value="Because of the nested loop.")
+    mock_llm_cls.return_value = mock_llm
+
+    mock_provider = AsyncMock()
+    mock_provider.get_pr_info = AsyncMock(return_value=mock_pr_info)
+    mock_provider.get_pr_diff = AsyncMock(return_value="diff")
+    mock_provider.post_comment = AsyncMock()
+    mock_provider.get_repo_permission = AsyncMock(return_value="read")
+    mock_provider_cls.return_value = mock_provider
+
+    payload = _make_comment_payload("@mira-bot why is this slow?")
+    await handle_comment(payload, mock_app_auth, "mira-bot")
+
+    mock_llm.complete.assert_awaited_once()
+    mock_provider.get_repo_permission.assert_not_awaited()
 
 
 @patch(
