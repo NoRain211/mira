@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from mira.dashboard.db import PRReviewProgress
     from mira.llm.base import LLMProviderProtocol
 
 from mira.analysis.severity import classify_severity
@@ -21,6 +22,7 @@ from mira.core.file_filter import filter_files
 from mira.core.lint_pass import lint_pass
 from mira.core.noise_filter import drop_already_posted, filter_noise
 from mira.core.passes import (
+    _critique_llm,
     agentic_review_loop,
     cap_review_summary,
     dependency_review_pass,
@@ -236,6 +238,19 @@ def _security_relevant_files(files: list) -> list:
 
 _TEST_NAME_FORMS = ("test_{}", "{}_test", "{}_spec", "{}.test", "{}.spec", "{}Test", "{}Tests")
 _TESTABLE_EXTS = {"py", "go", "rb", "js", "jsx", "ts", "tsx", "java", "kt"}
+
+
+def _merge_progress(
+    prior: PRReviewProgress | None, reviewed: list[str], skipped: list[str]
+) -> tuple[set[str], set[str]]:
+    """Fold one pass into the PR's stored progress -> (reviewed, skipped) paths.
+
+    A file skipped now has unreviewed changes, even if a pass on an earlier head covered it.
+    """
+    prior_reviewed = set(prior.reviewed_paths) if prior else set()
+    prior_skipped = set(prior.skipped_paths) if prior else set()
+    new_reviewed = (prior_reviewed - set(skipped)) | set(reviewed)
+    return new_reviewed, (prior_skipped | set(skipped)) - new_reviewed
 
 
 def _untouched_tests_note(chunk_paths: list[str], changed: set[str], tree: list[str]) -> str:
@@ -457,6 +472,7 @@ class ReviewEngine:
         self.indexing_llm = indexing_llm or llm
         self.security_llm = security_llm or llm
         self._second_opinions: list[LLMProviderProtocol] | None = None
+        self._critic: LLMProviderProtocol | None = None
         self.provider = provider
         self.bot_name = bot_name
         self.dry_run = dry_run
@@ -618,7 +634,9 @@ class ReviewEngine:
         )
 
         placeholder_id: int | None = None
-        if not self.dry_run:
+        # Automatic review-rest rounds keep the first pass's walkthrough instead of
+        # replacing it with one that describes only this batch.
+        if not self.dry_run and not getattr(self, "_keep_walkthrough", False):
             try:
                 placeholder_id = await self._post_placeholder_comment(pr_info)
             except Exception as exc:
@@ -1041,10 +1059,9 @@ class ReviewEngine:
                     pr_info.number,
                     platform=pr_info.platform,
                 )
-                prior_reviewed = set(prior.reviewed_paths) if prior else set()
-                prior_skipped = set(prior.skipped_paths) if prior else set()
-                new_reviewed = prior_reviewed | set(result.reviewed_paths)
-                new_skipped = (prior_skipped | set(result.skipped_paths)) - new_reviewed
+                new_reviewed, new_skipped = _merge_progress(
+                    prior, result.reviewed_paths, result.skipped_paths
+                )
                 _app_db.upsert_pr_review_progress(
                     PRReviewProgress(
                         owner=pr_info.owner,
@@ -1380,6 +1397,8 @@ class ReviewEngine:
             try:
                 # Lint findings come from running ruff, so the critic has nothing to grade.
                 linted = [c for c in final_comments if c.source_pass == "lint"]
+                if self._critic is None:
+                    self._critic = _critique_llm(self.config.llm)
                 final_comments = linted + await self_critique(
                     self.llm,
                     [c for c in final_comments if c.source_pass != "lint"],
@@ -1389,6 +1408,7 @@ class ReviewEngine:
                     diff_files=critique_files,
                     audit=audit,
                     llm_config=self.config.llm,
+                    critic_llm=self._critic,
                 )
             except Exception as exc:
                 logger.warning("Self-critique pass failed, keeping original comments: %s", exc)
@@ -1443,6 +1463,7 @@ class ReviewEngine:
             )
 
         all_paths = [f.path for f in filtered]
+        pr_paths = {f.path for f in patch.files}
         selected_paths = [f.path for f in selected]
         skipped_paths_only = [p for p, _reason in skipped]
 
@@ -1470,7 +1491,9 @@ class ReviewEngine:
 
         # Fire walkthrough early so review_pr can post it before chunk review finishes.
         walkthrough_task = _asyncio.create_task(
-            self._generate_walkthrough(filtered, pr_title, pr_description)
+            _asyncio.sleep(0, result=None)
+            if getattr(self, "_keep_walkthrough", False)
+            else self._generate_walkthrough(filtered, pr_title, pr_description)
         )
 
         # `_walkthrough_notify_task` exposed on self so review_pr can await it
@@ -1532,7 +1555,7 @@ class ReviewEngine:
                         code_context=(code_context_block or "")
                         + _untouched_tests_note(
                             [f.path for f in chunk.files],
-                            set(all_paths),
+                            pr_paths,
                             self._agentic_repo_tree,
                         ),
                         learned_rules=learned_rules or None,
@@ -1746,11 +1769,12 @@ class ReviewEngine:
                 logger.warning("PR summary generation failed: %s", exc)
                 pr_summary_block = ""
 
-        # Second-opinion models run on their own providers; count their tokens too.
+        # Second-opinion and critic models run on their own providers; count their tokens too.
+        extra_llms = [*(self._second_opinions or []), *([self._critic] if self._critic else [])]
         usage = self.llm.usage
-        if self._second_opinions:
+        if extra_llms:
             usage = dict(usage)
-            for other in self._second_opinions:
+            for other in extra_llms:
                 for key, value in other.usage.items():
                     usage[key] = usage.get(key, 0) + value
 

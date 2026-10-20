@@ -63,6 +63,17 @@ class TestEffectiveModelLogging:
 
 
 class TestSetModelsInheritAndCustom:
+    async def test_disconnect_refuses_provider_still_selected(self, in_memory_db: AppDatabase):
+        from fastapi import HTTPException
+
+        from mira.dashboard.routers.llm_auth import disconnect_api_provider
+
+        in_memory_db.set_setting("security_fallback_models", "@nvidia/llama")
+        with pytest.raises(HTTPException) as exc:
+            await disconnect_api_provider("nvidia", _admin_req())
+        assert exc.value.status_code == 409
+        assert "@nvidia/llama" in exc.value.detail
+
     def test_saved_empty_lists_override_mira_yaml(self, in_memory_db: AppDatabase):
         from mira.dashboard.models_config import ensemble_configs
 

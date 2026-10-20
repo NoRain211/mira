@@ -74,6 +74,45 @@ def test_disconnected_fallback_does_not_block_primary():
     assert llm.config.base_url == "https://integrate.api.nvidia.com/v1"
 
 
+def test_disconnected_primary_falls_back():
+    llm = create_llm(LLMConfig(model="@nope/x", fallback_models=["@nvidia/y"]))
+    assert llm.config.base_url == "https://integrate.api.nvidia.com/v1"
+
+
+def test_chain_supports_temperature_only_if_every_model_does():
+    from types import SimpleNamespace
+
+    from mira.llm import ModelChain
+
+    def fake(**kw):
+        return SimpleNamespace(
+            config=None, supports_json_mode=True, supports_tool_calling=True, **kw
+        )
+
+    assert ModelChain(["a", "b"], [fake(), fake()]).supports_temperature
+    assert not ModelChain(
+        ["a", "b"], [fake(), fake(supports_temperature=False)]
+    ).supports_temperature
+
+
+def test_local_presets_cost_nothing_but_proxies_do():
+    from mira.llm import registry
+
+    assert registry.pricing("@ollama/qwen3:8b") == (0.0, 0.0)
+    assert registry.pricing("@litellm/gpt-x") != (0.0, 0.0)
+
+
+def test_non_chat_models_are_not_offered():
+    assert api_providers._callable("openai", "gpt-5")
+    assert not api_providers._callable("openai", "text-embedding-3-large")
+    assert not api_providers._callable("openai", "gpt-4o-mini-tts")
+
+
+def test_corrupt_store_reads_as_empty():
+    credential_store.path("api_providers.json").write_text("{truncated")
+    assert api_providers.public() == []
+
+
 def test_key_never_serialized():
     llm = create_llm(LLMConfig(model="@nvidia/x"))
     assert "nv-key" not in llm.config.model_dump_json() and "nv-key" not in repr(llm.config)

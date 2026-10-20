@@ -20,23 +20,29 @@ from mira.security.pr_scan import _added_line_hits
 logger = logging.getLogger(__name__)
 
 RULES = "E9,F63,F7,F82"
+# Root config files, so the repo's per-file ignores, builtins and target version apply.
+# shortcut: nested per-directory ruff configs are not fetched; add them if repos rely on them.
+CONFIG_FILES = ("pyproject.toml", "ruff.toml", ".ruff.toml")
 
 
 async def lint_pass(files: list[FileDiff], fetcher) -> list[ReviewComment]:  # type: ignore[no-untyped-def]
     ruff = shutil.which("ruff")
     py = [f for f in files if f.path.endswith(".py")]
-    if not ruff or not py or fetcher is None:
+    if not py or fetcher is None:
+        return []
+    if not ruff:
+        logger.info("ruff is not installed; skipping the lint pass (install mira-reviewer[serve])")
         return []
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            for f in py:
-                content = await fetcher.fetch(f.path)
+            for name in [*CONFIG_FILES, *(f.path for f in py)]:
+                content = await fetcher.fetch(name)
                 if content:
-                    target = Path(tmp, f.path)
+                    target = Path(tmp, name)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(content, encoding="utf-8")
             proc = await asyncio.create_subprocess_exec(
-                ruff, "check", "--isolated", "--no-cache", "--exit-zero", "--select", RULES,
+                ruff, "check", "--no-cache", "--exit-zero", "--select", RULES,
                 "--output-format", "json", tmp,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )  # fmt: skip
@@ -46,6 +52,10 @@ async def lint_pass(files: list[FileDiff], fetcher) -> list[ReviewComment]:  # t
                 proc.kill()
                 await proc.wait()
                 raise
+            if proc.returncode:
+                # Usually a repo ruff config this ruff version can't read.
+                logger.warning("ruff exited with code %s; skipping the lint pass", proc.returncode)
+                return []
             diagnostics = json.loads(stdout or b"[]")
             root = Path(tmp).resolve()
             for d in diagnostics:
@@ -57,6 +67,9 @@ async def lint_pass(files: list[FileDiff], fetcher) -> list[ReviewComment]:  # t
     added = {f.path: dict(_added_line_hits(f, None)) for f in py}
     comments = []
     for d in diagnostics:
+        # A repo config's extend-select can add rules; keep only the bug-only set.
+        if d.get("code") and not d["code"].startswith(tuple(RULES.split(","))):
+            continue
         line = d["location"]["row"]
         code = added.get(d["path"], {}).get(line)
         if code is None:

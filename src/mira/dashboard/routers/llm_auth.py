@@ -148,8 +148,22 @@ async def connect_api_provider(body: ConnectProvider, request: Request) -> dict:
 @router.delete("/api/llm-providers/{provider_id}")
 async def disconnect_api_provider(provider_id: str, request: Request) -> dict:
     _require_admin(request)
+    from mira.config import load_config
     from mira.dashboard import model_catalog
+    from mira.dashboard.models_config import critique_config, ensemble_configs, llm_config_for
 
+    # Reviews build every selected model up front, so a stale reference would stop them all.
+    base = load_config().llm
+    tiers = [llm_config_for(t, base) for t in ("indexing", "review", "security")]
+    models = [m for c in tiers for m in (c.model, *c.fallback_models)]
+    models += [c.model for c in (critique_config(base), *ensemble_configs(base)) if c]
+    in_use = sorted({m for m in models if m.startswith(f"@{provider_id}/")})
+    if in_use:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Still selected on the Models page: {', '.join(in_use)}. "
+            "Choose other models first.",
+        )
     await api_providers.disconnect(provider_id)
     model_catalog._cache.pop(f"api:{provider_id}", None)
     return {"ok": True}

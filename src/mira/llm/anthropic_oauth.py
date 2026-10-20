@@ -40,8 +40,13 @@ def _strip_name(name: str) -> str:
     return name[len(_TOOL_PREFIX) :] if name.startswith(_TOOL_PREFIX) else name
 
 
-def _to_anthropic(messages: list) -> tuple[str, list[dict]]:
-    """Chat-shaped messages -> (system text, Anthropic messages)."""
+def _to_anthropic(
+    messages: list, raw_turns: dict[str, list[dict]] | None = None
+) -> tuple[str, list[dict]]:
+    """Chat-shaped messages -> (system text, Anthropic messages).
+
+    `raw_turns` maps a tool_use id to Claude's original blocks for that assistant turn.
+    """
     system: list[str] = []
     out: list[dict] = []
 
@@ -57,8 +62,14 @@ def _to_anthropic(messages: list) -> tuple[str, list[dict]]:
         if role == "system":
             system.append(content)
         elif role == "assistant":
+            calls = msg.get("tool_calls") or []
+            # Tool-use turns must return thinking blocks unchanged, so resend Claude's own.
+            raw = (raw_turns or {}).get(calls[0].get("id", "")) if calls else None
+            if raw:
+                push("assistant", list(raw))
+                continue
             blocks = [{"type": "text", "text": content}] if content else []
-            for tc in msg.get("tool_calls") or []:
+            for tc in calls:
                 args = tc.get("function", {}).get("arguments") or "{}"
                 blocks.append(
                     {
@@ -108,6 +119,7 @@ class AnthropicOAuthProvider:
         self.config = config
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self._raw_turns: dict[str, list[dict]] = {}
         self._send = retry(  # type: ignore[method-assign]
             stop=stop_after_attempt(config.max_retries),
             wait=wait_exponential(
@@ -152,7 +164,7 @@ class AnthropicOAuthProvider:
                 f"{extra_system}\n\nRespond by calling the {forced['name']} tool.".strip()
             )
         account = await oauth_accounts.access_token("anthropic")
-        system_text, wire_messages = _to_anthropic(messages)
+        system_text, wire_messages = _to_anthropic(messages, self._raw_turns)
         system = [{"type": "text", "text": oauth_accounts.CLAUDE_CODE_IDENTITY}]
         for text in (system_text, extra_system):
             if text:
@@ -262,6 +274,10 @@ class AnthropicOAuthProvider:
             tool_choice={"type": "auto"},
             temperature=self.config.temperature if temperature is None else temperature,
         )
+        content = data.get("content", [])
+        for b in content:
+            if b.get("type") == "tool_use" and b.get("id"):
+                self._raw_turns[b["id"]] = content
         tool_calls = [
             {
                 "id": b.get("id"),
@@ -271,7 +287,7 @@ class AnthropicOAuthProvider:
                     "arguments": json.dumps(b.get("input") or {}),
                 },
             }
-            for b in data.get("content", [])
+            for b in content
             if b.get("type") == "tool_use"
         ]
         text = self._text(data)

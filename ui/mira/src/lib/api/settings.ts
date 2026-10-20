@@ -125,7 +125,8 @@ export const settingsApi = {
     security_model: string,
     review_thinking_mode: string = "",
     api_style: string = "chat",
-    extra?: {
+    // Omitted fields keep their current value (dashboard setting or mira.yaml).
+    extra?: Partial<{
       indexing_fallbacks: string[]
       review_fallbacks: string[]
       security_fallbacks: string[]
@@ -134,7 +135,7 @@ export const settingsApi = {
       indexing_reasoning: string
       security_reasoning: string
       critique_reasoning: string
-    }
+    }>
   ) =>
     putJson<{ ok: boolean }>("/api/settings/models", {
       indexing_model,

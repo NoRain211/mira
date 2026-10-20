@@ -135,21 +135,28 @@ async def run_pr_review(
 
         # Large PRs: keep reviewing the files the first pass skipped, like `review-rest`,
         # under the same tracker claim so no other review starts in between.
+        follow_up_error = ""
         for _ in range(config.review.auto_review_rest_rounds):
             progress = _app_db.get_pr_review_progress(owner, repo, number, platform=platform)
             if not progress or not progress.skipped_paths:
                 break
             rest = _review_engine(config, provider, bot_name)
             rest._review_only_paths = set(progress.skipped_paths)  # type: ignore[attr-defined]
+            rest._keep_walkthrough = True  # type: ignore[attr-defined]
             logger.info("Reviewing %d skipped file(s) on %s", len(progress.skipped_paths), pr_url)
             try:
                 extra = await rest.review_pr(pr_url)
             except Exception as exc:
                 logger.warning("Follow-up review of skipped files failed on %s: %s", pr_url, exc)
+                follow_up_error = f"Follow-up review of skipped files failed: {exc}"
                 break
             comments += extra.comments
             key_issues += len(extra.key_issues)
-        review_tracker.complete(repo_full, number)
+        if follow_up_error:
+            # The first pass's findings still go out below; the tracker shows the rest is missing.
+            review_tracker.fail(repo_full, number, follow_up_error)
+        else:
+            review_tracker.complete(repo_full, number)
     except Exception as exc:
         review_tracker.fail(repo_full, number, str(exc))
         raise

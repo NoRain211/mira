@@ -115,7 +115,8 @@ async def _run_one(
             try:
                 judgement = await judge_pr(fixture, comments, judge_llm)
                 break
-            except LLMError as exc:
+            # Malformed judge tool arguments surface as ValueError/TypeError from parsing.
+            except (LLMError, ValueError, TypeError) as exc:
                 logger.warning("Judge failed for %s: %s", fixture["pr_url"], exc)
                 if isinstance(exc, NonRetriableLLMError) or attempt == 2:
                     error = f"Judge failed: {exc}"

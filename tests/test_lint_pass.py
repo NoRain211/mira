@@ -22,7 +22,9 @@ DIFF = """diff --git a/app/calc.py b/app/calc.py
 
 
 class _Fetcher:
-    async def fetch(self, path: str) -> str:
+    async def fetch(self, path: str) -> str | None:
+        if not path.endswith(".py"):
+            return None  # no repo ruff config
         return "def total(xs):\n    count = len(xs)\n    return sum(xs) / cuont\n"
 
 
@@ -32,6 +34,25 @@ async def test_lint_pass_flags_undefined_name_on_added_line():
 
     assert [(c.path, c.line, c.source_pass) for c in comments] == [("app/calc.py", 3, "lint")]
     assert "cuont" in comments[0].title
+
+
+class _RepoFetcher:
+    files = {
+        "pyproject.toml": '[tool.ruff]\nbuiltins = ["_"]\n',
+        "app/calc.py": "def total(xs):\n    count = len(xs)\n    return _(sum(xs) / cuont)\n",
+    }
+
+    async def fetch(self, path: str) -> str | None:
+        return self.files.get(path)
+
+
+@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff not installed")
+async def test_lint_pass_honors_repo_ruff_config():
+    diff = DIFF.replace("+    return sum(xs) / cuont", "+    return _(sum(xs) / cuont)")
+    comments = await lint_pass(parse_diff(diff).files, _RepoFetcher())
+
+    # `_` is a declared builtin, so only the real typo is flagged.
+    assert [c.title for c in comments] == ["Undefined name `cuont`"]
 
 
 def test_untouched_tests_note_lists_only_unchanged_tests():

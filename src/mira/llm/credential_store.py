@@ -54,7 +54,11 @@ def read(name: str) -> dict:
         except InvalidToken:
             logger.warning("Cannot decrypt %s with MIRA_SECRET_KEY; treating it as empty", name)
             return {}
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        logger.warning("%s is not valid JSON; treating it as empty", name)
+        return {}
 
 
 def save(name: str, data: dict) -> None:
