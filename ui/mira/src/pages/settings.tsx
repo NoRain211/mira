@@ -1,5 +1,5 @@
 import { Loader2, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { ModelCombobox, type ModelOption } from "@/components/model-combobox"
 import { ProvidersPanel } from "@/components/providers-panel"
@@ -99,6 +99,10 @@ export function SettingsPage() {
   const [apiStyleOptions, setApiStyleOptions] = useState<ModelOption[]>([])
   const [savingModels, setSavingModels] = useState(false)
   const [modelsSaved, setModelsSaved] = useState(false)
+  // Fallback/critic/second-opinion values as loaded. They may come from mira.yaml, so
+  // saving sends only the ones the user changed instead of pinning them as overrides.
+  const loadedAux = useRef<Record<string, unknown>>({})
+  const modelsRequest = useRef(0)
 
   const [effective, setEffective] = useState<{
     filter?: Record<string, number | boolean | string>
@@ -121,13 +125,17 @@ export function SettingsPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   // Provider changes refresh only the catalog so unsaved picks survive.
-  const loadModels = (withSelections = true) =>
-    api.getModels().then((m) => {
-      setBackend(m.backend)
-      setMissingApiKey(m.missing_api_key ?? "")
-      setIndexingOptions(m.indexing_options)
-      setReviewOptions(m.review_options)
-      setSecurityOptions(m.security_options)
+  const loadModels = (withSelections = true) => {
+    const request = ++modelsRequest.current
+    return api.getModels().then((m) => {
+      // Only the newest catalog applies, so a slow earlier response can't overwrite it.
+      if (request === modelsRequest.current) {
+        setBackend(m.backend)
+        setMissingApiKey(m.missing_api_key ?? "")
+        setIndexingOptions(m.indexing_options)
+        setReviewOptions(m.review_options)
+        setSecurityOptions(m.security_options)
+      }
       if (!withSelections) return
       setIndexingModel(m.indexing_source === "config" ? "" : m.indexing_model)
       setReviewModel(m.review_source === "config" ? "" : m.review_model)
@@ -139,14 +147,23 @@ export function SettingsPage() {
       setThinkingOptions(m.thinking_options)
       setApiStyle(m.api_style ?? "chat")
       setApiStyleOptions(m.api_style_options ?? [])
-      setFallbacks({
+      const aux = {
         indexing_fallbacks: m.indexing_fallbacks ?? [],
         review_fallbacks: m.review_fallbacks ?? [],
         security_fallbacks: m.security_fallbacks ?? [],
+        critique_model: m.critique_model ?? "",
+        ensemble_models: m.ensemble_models ?? [],
+      }
+      loadedAux.current = aux
+      setFallbacks({
+        indexing_fallbacks: aux.indexing_fallbacks,
+        review_fallbacks: aux.review_fallbacks,
+        security_fallbacks: aux.security_fallbacks,
       })
-      setCritiqueModel(m.critique_model ?? "")
-      setEnsembleModels(m.ensemble_models ?? [])
+      setCritiqueModel(aux.critique_model)
+      setEnsembleModels(aux.ensemble_models)
     })
+  }
 
   useEffect(() => {
     if (!currentUser?.is_admin) return
@@ -175,18 +192,26 @@ export function SettingsPage() {
 
   const saveModels = async () => {
     setSavingModels(true)
+    const aux = {
+      ...fallbacks,
+      critique_model: critiqueModel,
+      ensemble_models: ensembleModels,
+    }
+    const edited = Object.fromEntries(
+      Object.entries(aux).filter(
+        ([key, value]) =>
+          JSON.stringify(value) !== JSON.stringify(loadedAux.current[key])
+      )
+    )
     await api.saveModels(
       indexingModel,
       reviewModel,
       securityModel,
       thinkingMode,
       apiStyle,
-      {
-        ...fallbacks,
-        critique_model: critiqueModel,
-        ensemble_models: ensembleModels,
-      }
+      edited
     )
+    loadedAux.current = aux
     setSavingModels(false)
     setModelsSaved(true)
     setTimeout(() => setModelsSaved(false), 2000)

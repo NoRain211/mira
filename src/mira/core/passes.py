@@ -429,6 +429,7 @@ async def self_critique(
     diff_files: list | None = None,
     audit: list[dict] | None = None,
     llm_config: LLMConfig | None = None,
+    critic_llm: LLMProviderProtocol | None = None,
 ) -> list[ReviewComment]:
     """Grade each draft comment's evidence and drop the unsupported ones.
 
@@ -499,7 +500,10 @@ async def self_critique(
     )
 
     critic_llm = (
-        _critique_llm(llm_config or load_config().llm) or indexing_llm or _indexing_llm(llm)
+        critic_llm
+        or _critique_llm(llm_config or load_config().llm)
+        or indexing_llm
+        or _indexing_llm(llm)
     )
 
     try:

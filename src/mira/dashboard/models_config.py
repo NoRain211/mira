@@ -228,4 +228,6 @@ def ensemble_configs(base: LLMConfig) -> list[LLMConfig]:
     if not models:
         return []
     review = llm_config_for("review", base)
-    return [review.model_copy(update={"model": m, "fallback_models": []}) for m in models]
+    # No fallbacks at all: a failed second opinion must not vote with another model.
+    single = {"fallback_models": [], "fallback_model": None}
+    return [review.model_copy(update={"model": m, **single}) for m in models]

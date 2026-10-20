@@ -33,7 +33,8 @@ class ModelChain:
         self.config = providers[0].config
         self.supports_json_mode = providers[0].supports_json_mode
         self.supports_tool_calling = all(p.supports_tool_calling for p in providers)
-        self.supports_temperature = getattr(providers[0], "supports_temperature", True)
+        # Any model may answer, so ensemble sampling needs every one to honor temperature.
+        self.supports_temperature = all(getattr(p, "supports_temperature", True) for p in providers)
 
     @property
     def total_prompt_tokens(self) -> int:
@@ -110,16 +111,19 @@ def create_llm(config: LLMConfig) -> LLMProviderProtocol:
         return _create_one(config)
     single: dict[str, Any] = {"fallback_model": None, "fallback_models": []}
     chain_models, providers = [], []
-    for i, m in enumerate(models):
+    first_error: Exception | None = None
+    for m in models:
         try:
             providers.append(_create_one(config.model_copy(update={**single, "model": m})))
         except Exception as exc:
-            if i == 0:
-                raise
-            # An unusable fallback (e.g. a disconnected provider) must not block the primary.
-            logger.warning("Skipping fallback model %s: %s", m, exc)
+            # An unusable model (e.g. a disconnected provider) must not block the others.
+            first_error = first_error or exc
+            logger.warning("Skipping model %s: %s", m, exc)
             continue
         chain_models.append(m)
+    if not providers:
+        assert first_error is not None
+        raise first_error
     return ModelChain(chain_models, providers) if len(providers) > 1 else providers[0]
 
 

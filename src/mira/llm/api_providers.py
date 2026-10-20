@@ -265,6 +265,16 @@ PRESETS: list[dict] = [
         key="optional",
     ),
 ]
+# Self-hosted inference has no per-token cost; LiteLLM usually proxies paid APIs.
+# shortcut: only local presets are priced at zero; a custom localhost endpoint still gets the
+# unknown-model rate. Store the tier on connect if custom local endpoints become common.
+LOCAL_IDS = {p["id"] for p in PRESETS if p["tier"] == "local"} - {"litellm"}
+
+# /models also lists embedding, speech, image and moderation models that /chat/completions
+# rejects. shortcut: id patterns; switch to capability metadata if providers expose it.
+_NON_CHAT = re.compile(
+    r"embed|moderation|whisper|tts|transcribe|dall-e|gpt-image|imagen|rerank|-audio|realtime"
+)
 
 # OpenCode serves some families only on /responses or /messages; Mira calls /chat/completions.
 # ponytail: family prefixes from opencode.ai/docs (zen, go); update when they add families.
@@ -278,6 +288,8 @@ _CHAT_ONLY = {
 
 
 def _callable(pid: str, model: str) -> bool:
+    if _NON_CHAT.search(model.lower()):
+        return False
     prefixes = _CHAT_ONLY.get(pid)
     if prefixes is None:
         return True

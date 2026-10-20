@@ -332,6 +332,30 @@ async def test_claude_auto_tool_choice_rejection_is_not_retried(monkeypatch):
     assert len(seen) == 1
 
 
+async def test_claude_agentic_hop_resends_thinking_blocks(monkeypatch):
+    await _add("anthropic")
+    turn = [
+        {"type": "thinking", "thinking": "look first", "signature": "sig"},
+        {"type": "tool_use", "id": "t1", "name": "custom_read_file", "input": {"path": "a.py"}},
+    ]
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"content": turn, "usage": {}})
+
+    seen = _route(monkeypatch, handler)
+    provider = AnthropicOAuthProvider(LLMConfig(model="claude-x", reasoning_effort="high"))
+    convo: list = [{"role": "user", "content": "review"}]
+    msg = await provider.complete_agentic(convo, [SUBMIT_REVIEW_TOOL])
+    # The agentic loop rebuilds the assistant turn in chat shape, without thinking blocks.
+    convo += [
+        {"role": "assistant", "content": msg["content"], "tool_calls": msg["tool_calls"]},
+        {"role": "tool", "tool_call_id": "t1", "content": "print(1)"},
+    ]
+    await provider.complete_agentic(convo, [SUBMIT_REVIEW_TOOL])
+
+    assert json.loads(seen[1].content)["messages"][1] == {"role": "assistant", "content": turn}
+
+
 async def test_claude_thinking_uses_adaptive_then_budget(monkeypatch):
     await _add("anthropic")
 

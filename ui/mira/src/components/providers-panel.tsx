@@ -52,7 +52,10 @@ export function ProvidersPanel({ onChanged }: { onChanged?: () => void }) {
           onChange={(e) => setSearch(e.target.value)}
         />
         {providers.error && (
-          <p className="flex items-center gap-2 text-xs text-destructive">
+          <p
+            role="alert"
+            className="flex items-center gap-2 text-xs text-destructive"
+          >
             Couldn't load providers: {providers.error}
             <Button size="sm" variant="outline" onClick={providers.refresh}>
               Retry
