@@ -259,6 +259,8 @@ async def test_reasoning_settings_round_trip(in_memory_db, no_catalog_fetch, mon
         "review_thinking_mode": "invalid",
         "review_fallbacks": ["claude/x#no"],
         "ensemble_models": ["claude/x#"],
+        "review_model": "custom/model#ultra",
+        "critique_model": "claude/x#bad",
     }.items():
         with pytest.raises(HTTPException) as exc:
             set_models(body.model_copy(update={field: value}), _admin_req())

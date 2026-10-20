@@ -28,6 +28,7 @@ def _reset_reasoning_rejections():
     from mira.llm import base
 
     base._NO_REASONING.clear()
+    base._NO_TEMPERATURE.clear()
 
 
 @pytest.fixture

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 # Models that rejected a reasoning effort, per endpoint. Process-wide because every review
 # builds fresh providers; without it each review would re-learn the rejection.
 _NO_REASONING: dict[str, set[str]] = {}
+# Models that only accept their default temperature, per endpoint (same reasoning as above).
+_NO_TEMPERATURE: dict[str, set[str]] = {}
 
 
 @runtime_checkable
@@ -156,6 +158,7 @@ class OpenAICompatibleProvider:
         self.total_completion_tokens = 0
         self._no_forced_tool_choice: set[str] = set()
         self._no_reasoning = _NO_REASONING.setdefault(config.base_url, set())
+        self._no_temperature = _NO_TEMPERATURE.setdefault(config.base_url, set())
 
         # Apply retry decorator imperatively so it reads config values
         # (max_retries, retry_min_wait, retry_max_wait) at instance time.

@@ -40,6 +40,8 @@ class LLMProvider(OpenAICompatibleProvider):
         self, client: httpx.AsyncClient, body: dict, temperature: float | None
     ) -> httpx.Response:
         """POST to /chat/completions, retrying without reasoning or temperature if rejected."""
+        if body["model"] in self._no_temperature:
+            body.pop("temperature", None)
         resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
         if resp.status_code == 400 and "reasoning" in body and "reasoning" in resp.text.lower():
             # Reasoning effort unsupported on this model/endpoint — drop it
@@ -47,13 +49,15 @@ class LLMProvider(OpenAICompatibleProvider):
             logger.info("Model %s rejected reasoning effort; retrying without it", body["model"])
             self._no_reasoning.add(body["model"])
             body.pop("reasoning", None)
-            body["temperature"] = (
-                temperature if temperature is not None else self.config.temperature
-            )
+            if body["model"] not in self._no_temperature:
+                body["temperature"] = (
+                    temperature if temperature is not None else self.config.temperature
+                )
             resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
         if resp.status_code == 400 and "temperature" in body and "temperature" in resp.text.lower():
             # Some models (e.g. kimi-k2.7-code) only accept their default temperature.
             logger.info("Model %s rejected temperature; retrying without it", body["model"])
+            self._no_temperature.add(body["model"])
             body.pop("temperature")
             resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
         return resp

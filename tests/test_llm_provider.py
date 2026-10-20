@@ -737,6 +737,28 @@ class TestReasoningFallback:
         assert "temperature" not in posts[1].kwargs["json"]
 
     @pytest.mark.asyncio
+    async def test_temperature_rejection_is_remembered(self):
+        rejected = _mock_httpx_response(
+            {"error": {"message": "invalid temperature: only 1 is allowed"}}, status_code=400
+        )
+        ok = _mock_httpx_response(_make_tool_response_json('{"comments": []}'))
+        messages = [{"role": "user", "content": "hi"}]
+
+        with patch("mira.llm.provider.httpx.AsyncClient") as cls:
+            cls.return_value = self._client([rejected, ok, ok])
+            await LLMProvider(LLMConfig(model="some/model")).complete_with_tools(
+                messages, tools=[self._TOOL]
+            )
+            # A fresh provider (next review) skips the doomed attempt.
+            await LLMProvider(LLMConfig(model="some/model")).complete_with_tools(
+                messages, tools=[self._TOOL]
+            )
+            posts = cls.return_value.post.call_args_list
+
+        assert len(posts) == 3
+        assert "temperature" not in posts[2].kwargs["json"]
+
+    @pytest.mark.asyncio
     async def test_agentic_rejection_is_shared_with_new_providers(self):
         config = LLMConfig(model="some/model", reasoning_effort="high")
         rejected = _mock_httpx_response({"message": "Unsupported parameter(s): reasoning"}, 400)

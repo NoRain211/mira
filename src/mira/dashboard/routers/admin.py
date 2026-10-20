@@ -314,6 +314,7 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
         if effort is not None and effort not in THINKING_MODE_VALUES | {""}:
             raise HTTPException(status_code=400, detail=f"{effort!r} is not a valid thinking mode.")
     for entries in (
+        [body.indexing_model, body.review_model, body.security_model, body.critique_model or ""],
         body.indexing_fallbacks,
         body.review_fallbacks,
         body.security_fallbacks,
