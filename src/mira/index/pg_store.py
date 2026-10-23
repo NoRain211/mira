@@ -321,6 +321,19 @@ def _registry_owner(storage_owner: str) -> str:
     return storage_owner
 
 
+def rename_repo_pg(url: str, owner: str, old: str, new: str) -> None:
+    """Move every index row for owner/old to owner/new in one transaction."""
+    tables = (
+        "files", "symbols", "imports", "symbol_refs", "directories", "external_refs",
+        "review_events", "review_comments", "pr_replies", "pr_fingerprints",
+        "review_context", "feedback_events", "learned_rules", "package_manifests",
+        "vulnerabilities",
+    )  # fmt: skip
+    with _pg_cursor(url) as cur, cur.connection.transaction():
+        for table in tables:
+            cur.execute(f"UPDATE {table} SET repo=%s WHERE owner=%s AND repo=%s", (new, owner, old))
+
+
 def list_learned_rules_org_wide(
     url: str, limit: int = 1000, status: str | None = None
 ) -> list[dict]:
