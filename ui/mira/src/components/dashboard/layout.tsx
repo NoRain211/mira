@@ -6,7 +6,6 @@ import {
   ChevronsUpDown,
   Database,
   GitFork,
-  History,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -79,7 +78,6 @@ const navItems = [
   { to: "/relationships", icon: GitFork, label: "Relationships" },
   { to: "/rules", icon: BookOpen, label: "Rules" },
   { to: "/learnings", icon: Brain, label: "Learnings" },
-  { to: "/changelog", icon: History, label: "Changelog" },
   { to: "/users", icon: Users, label: "Users", adminOnly: true },
 ]
 
@@ -93,7 +91,6 @@ const settingsSubItems = [
 
 const PAGE_LABELS: Record<string, string> = {
   activity: "Activity",
-  changelog: "Changelog",
   repos: "Repositories",
   contributors: "Reviewers",
   packages: "Packages",

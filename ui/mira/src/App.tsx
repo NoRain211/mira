@@ -8,7 +8,6 @@ import { UninstallModal } from "@/components/dashboard/uninstall-modal"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { ActivityPage } from "@/pages/activity"
-import { ChangelogPage } from "@/pages/changelog"
 import { ContributorDetailPage } from "@/pages/contributor-detail"
 import { ContributorsPage } from "@/pages/contributors"
 import { DashboardPage } from "@/pages/dashboard"
@@ -203,7 +202,6 @@ export function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="activity" element={<ActivityPage />} />
-          <Route path="changelog" element={<ChangelogPage />} />
           <Route path="repos" element={<ReposPage />} />
           <Route path="repos/*" element={<RepoDetailPage />} />
           <Route path="contributors" element={<ContributorsPage />} />

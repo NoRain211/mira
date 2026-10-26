@@ -18,7 +18,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Broader source and configuration file support.** Review and indexing recognize more languages, templates, build files, and configuration formats, while documentation remains excluded from indexing.
 - **Configurable indexing concurrency.** `index.llm_concurrency` controls concurrent LLM summarization batches for full and incremental indexing. The default is 8, with a supported range of 1–32, so deployments can respect provider concurrency limits.
-- **In-app changelog.** A Changelog page in the dashboard makes the latest release notes available alongside repository and review activity.
 
 ### Fixed
 
