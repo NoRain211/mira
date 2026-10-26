@@ -9,6 +9,7 @@ other OpenAI-compatible endpoint works off the portable default, no entry needed
 from __future__ import annotations
 
 import logging
+import time
 from typing import ClassVar
 
 import httpx
@@ -42,7 +43,22 @@ class LLMProvider(OpenAICompatibleProvider):
         """POST to /chat/completions, retrying without reasoning or temperature if rejected."""
         if body["model"] in self._no_temperature:
             body.pop("temperature", None)
-        resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
+        started = time.monotonic()
+        try:
+            resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
+        except Exception as exc:
+            # Transport failures carry no status or body, so log the context here.
+            logger.warning(
+                "LLM transport error for %s at %s after %.0fms (timeout=%ss, reasoning=%s): %s: %s",
+                body["model"],
+                self._chat_url(),
+                (time.monotonic() - started) * 1000,
+                self.config.request_timeout,
+                "reasoning" in body,
+                type(exc).__name__,
+                exc,
+            )
+            raise
         if resp.status_code == 400 and "reasoning" in body and "reasoning" in resp.text.lower():
             # Reasoning effort unsupported on this model/endpoint — drop it
             # and review without thinking instead of failing the review.
@@ -146,7 +162,8 @@ class LLMProvider(OpenAICompatibleProvider):
 
         self._account_usage(data)
 
-        message = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        message = choice["message"]
         tool_calls = message.get("tool_calls")
 
         if tool_calls and len(tool_calls) > 0:
@@ -159,7 +176,21 @@ class LLMProvider(OpenAICompatibleProvider):
             logger.warning("Model returned content instead of tool call, using content as fallback")
             return content
 
-        raise LLMError("no_tool_call")
+        # Neither a tool call nor content. Carry the response shape on the
+        # error's full message — counts only, never reasoning text.
+        usage = data.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        detail = (
+            f"status={resp.status_code} "
+            f"finish_reason={choice.get('finish_reason')} "
+            f"content_len={len(content)} "
+            f"reasoning_len={len(message.get('reasoning_content') or '')} "
+            f"tool_calls={len(tool_calls or [])} "
+            f"prompt_tokens={usage.get('prompt_tokens')} "
+            f"completion_tokens={usage.get('completion_tokens')} "
+            f"reasoning_tokens={details.get('reasoning_tokens')}"
+        )
+        raise LLMError("no_tool_call", detail=detail)
 
     async def _call_llm_agentic(
         self,
