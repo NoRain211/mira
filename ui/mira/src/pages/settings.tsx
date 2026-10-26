@@ -22,7 +22,7 @@ import {
 import { Link, useParams } from "react-router"
 
 import { api } from "@/lib/api"
-import { useAuth } from "@/lib/auth"
+import { useAuth } from "@/lib/auth-context"
 import { useDocumentTitle } from "@/lib/hooks"
 
 function ReasoningSelect({

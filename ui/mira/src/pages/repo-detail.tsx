@@ -131,6 +131,7 @@ function RepoDetailPageContent({
 
   const [indexing, setIndexing] = useState(false)
   const [indexStatus, setIndexStatus] = useState("")
+  const [cancelling, setCancelling] = useState(false)
 
   // Poll indexing status continuously so the UI reflects jobs started from
   // anywhere (this page, the setup modal, a webhook-driven backfill, etc.).
@@ -153,14 +154,17 @@ function RepoDetailPageContent({
           setIndexStatus(`Done — ${job.files_done} files indexed`)
           if (indexing) {
             setIndexing(false)
+            setCancelling(false)
             setTimeout(() => window.location.reload(), 1000)
           }
         } else if (job && job.status === "failed") {
           setIndexStatus(`Failed: ${job.error}`)
           setIndexing(false)
+          setCancelling(false)
         } else if (job && job.status === "cancelled") {
           setIndexStatus(`Cancelled — ${job.files_done} files indexed before stopping`)
           setIndexing(false)
+          setCancelling(false)
         }
       } catch {
         // ignore
@@ -178,6 +182,7 @@ function RepoDetailPageContent({
   const triggerIndex = async (full: boolean) => {
     if (!owner || !repo) return
     setIndexing(true)
+    setCancelling(false)
     setIndexStatus(full ? "Starting full re-index..." : "Starting index update...")
     try {
       await api.triggerIndex(owner, repo, full)
@@ -186,8 +191,6 @@ function RepoDetailPageContent({
       setIndexing(false)
     }
   }
-
-  const [cancelling, setCancelling] = useState(false)
 
   const cancelIndex = async () => {
     if (!owner || !repo) return
@@ -200,10 +203,6 @@ function RepoDetailPageContent({
       setCancelling(false)
     }
   }
-
-  useEffect(() => {
-    if (!indexing) setCancelling(false)
-  }, [indexing])
 
   if (loading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading...</div>

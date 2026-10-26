@@ -90,17 +90,20 @@ export function RulesPage() {
   const [editingRepo, setEditingRepo] = useState<EditingRule | null>(null)
 
   useEffect(() => {
-    if (!selectedRepo) {
-      setRepoRules([])
-      return
-    }
+    if (!selectedRepo) return
     const repoKey = splitRepoKey(selectedRepo)
-    if (!repoKey) {
-      setRepoRules([])
-      return
-    }
+    if (!repoKey) return
     const [owner, repo] = repoKey
-    api.listRepoRules(owner, repo).then(setRepoRules).catch(() => {})
+    let cancelled = false
+    api
+      .listRepoRules(owner, repo)
+      .then((rules) => {
+        if (!cancelled) setRepoRules(rules)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [selectedRepo])
 
   const saveRepo = async () => {
