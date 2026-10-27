@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from mira.models import FileChangeType, FileDiff, HunkInfo, Severity
@@ -37,6 +39,38 @@ def _file_diff(path: str, hunks: list[HunkInfo]) -> FileDiff:
         deleted_lines=0,
         hunks=hunks,
     )
+
+
+@pytest.fixture
+def osv_requests():
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "POST" and request.url.path == "/v1/querybatch":
+            queries = json.loads(request.content)["queries"]
+            return httpx.Response(
+                200, json={"results": [{"vulns": [{"id": "SYNTH-OSV-1"}]} for _ in queries]}
+            )
+        if request.method == "GET" and request.url.path == "/v1/vulns/SYNTH-OSV-1":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "SYNTH-OSV-1",
+                    "summary": "Synthetic advisory",
+                    "database_specific": {"severity": "HIGH"},
+                    "references": [{"type": "ADVISORY", "url": "https://example.invalid/advisory"}],
+                },
+            )
+        pytest.fail(f"Unexpected OSV request: {request.method} {request.url.path}")
+
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    with patch(
+        "mira.security.osv.httpx.AsyncClient",
+        side_effect=lambda **kwargs: client_type(transport=transport, **kwargs),
+    ):
+        yield requests
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +136,96 @@ class TestAddedLineHits:
 
 
 class TestScanManifestChanges:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path,content,ecosystem,name,version,line",
+        [
+            pytest.param(
+                "requirements.txt",
+                "demo-package==1.0.0\n",
+                "PyPI",
+                "demo-package",
+                "1.0.0",
+                1,
+                id="pip",
+            ),
+            pytest.param(
+                "package.json",
+                '{"dependencies":{"demo-package":"1.0.0"}}',
+                "npm",
+                "demo-package",
+                "1.0.0",
+                1,
+                id="npm",
+            ),
+            pytest.param(
+                "go.mod",
+                "module example.invalid/app\n\nrequire example.invalid/demo v1.0.0\n",
+                "Go",
+                "example.invalid/demo",
+                "v1.0.0",
+                3,
+                id="go",
+            ),
+            pytest.param(
+                "composer.lock",
+                '{"packages":[{"name":"example/demo-package","version":"1.0.0"}]}',
+                "Packagist",
+                "example/demo-package",
+                "1.0.0",
+                1,
+                id="composer",
+            ),
+        ],
+    )
+    async def test_manifest_ecosystem_reaches_osv(
+        self, osv_requests, path, content, ecosystem, name, version, line
+    ):
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(return_value=content)
+        diff = _file_diff(
+            path,
+            [
+                HunkInfo(
+                    source_start=line - 1,
+                    source_length=0,
+                    target_start=line,
+                    target_length=1,
+                    content=f"@@ -{line - 1},0 +{line} @@\n+{content.splitlines()[line - 1]}\n",
+                )
+            ],
+        )
+        comments = await scan_manifest_changes([diff], fetcher)
+
+        posts = [request for request in osv_requests if request.method == "POST"]
+        assert len(posts) == 1
+        assert json.loads(posts[0].content) == {
+            "queries": [{"package": {"ecosystem": ecosystem, "name": name}, "version": version}]
+        }
+        assert len(comments) == 1
+        assert comments[0].path == path
+        assert comments[0].line == line
+        assert comments[0].severity == Severity.BLOCKER
+        assert comments[0].title == f"Known vulnerabilities in {name}@{version}"
+        assert "SYNTH-OSV-1" in comments[0].body
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path,content,added",
+        [
+            ("Dockerfile", "FROM example.invalid/demo:1.0.0\n", "FROM example.invalid/demo:1.0.0"),
+            ("requirements.txt", "demo-package==1.0.0\n", "# unrelated comment"),
+        ],
+    )
+    async def test_ineligible_dependency_makes_no_osv_request(
+        self, osv_requests, path, content, added
+    ):
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(return_value=content)
+        diff = _file_diff(path, [_hunk(target_start=1, content=f"@@ -0,0 +1 @@\n+{added}\n")])
+        assert await scan_manifest_changes([diff], fetcher) == []
+        assert osv_requests == []
+
     @pytest.mark.asyncio
     async def test_added_vulnerable_dep(self):
         """Added vulnerable dep → one correctly-anchored blocker comment."""
