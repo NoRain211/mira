@@ -369,8 +369,8 @@ class TestScanManifestChanges:
         assert comments == []
 
 
-def _origin_manifest(path, package, *, padding=0, changed=True):
-    data = {"dependencies": {package: "1.0.0"}}
+def _origin_manifest(path, package, *, padding=0, changed=True, version="1.0.0"):
+    data = {"dependencies": {package: version}}
     if not changed:
         data = {"description": "unrelated update", **data}
     content = "\n" * padding + json.dumps(data, indent=2) + "\n"
@@ -389,7 +389,10 @@ def _origin_manifest(path, package, *, padding=0, changed=True):
 
 @pytest.fixture
 def origin_osv_http():
+    requests = []
+
     def respond(request):
+        requests.append(request)
         if request.method == "POST" and request.url.path == "/v1/querybatch":
             queries = json.loads(request.content)["queries"]
             return httpx.Response(
@@ -421,7 +424,7 @@ def origin_osv_http():
         "mira.security.osv.httpx.AsyncClient",
         side_effect=lambda **kwargs: client_type(transport=transport, **kwargs),
     ):
-        yield
+        yield requests
 
 
 class TestManifestCommentOrigins:
@@ -486,3 +489,198 @@ class TestManifestCommentOrigins:
             for c in comments
         )
         assert all(c.agent_prompt.startswith(f"In {first[0].path},") for c in comments)
+
+
+class TestManifestQueryDeduplication:
+    @pytest.mark.asyncio
+    async def test_repeated_modern_lockfile_tuple_has_one_query_and_comment(self, osv_requests):
+        content = json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"name": "synthetic-project", "version": "1.0.0"},
+                    "node_modules/demo-package": {"version": "1.0.0"},
+                    "node_modules/parent/node_modules/demo-package": {"version": "1.0.0"},
+                },
+            },
+            indent=2,
+        )
+        path = "package-lock.json"
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(return_value=content)
+        diff = _file_diff(
+            path,
+            [_hunk(1, "@@ -0,0 +1 @@\n" + "\n".join("+" + s for s in content.splitlines()))],
+        )
+
+        comments = await scan_manifest_changes([diff], fetcher)
+
+        posts = [request for request in osv_requests if request.method == "POST"]
+        assert len(posts) == 1
+        assert json.loads(posts[0].content) == {
+            "queries": [
+                {"package": {"ecosystem": "npm", "name": "demo-package"}, "version": "1.0.0"}
+            ]
+        }
+        assert len(comments) == 1
+        line, text = next(
+            (i, text)
+            for i, text in enumerate(content.splitlines(), 1)
+            if '"node_modules/demo-package"' in text
+        )
+        comment = comments[0]
+        assert (comment.path, comment.line, comment.existing_code) == (path, line, text)
+        assert comment.agent_prompt.startswith(f"In {path},")
+        assert "SYNTH-OSV-1" in comment.body
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reverse", [False, True])
+    @pytest.mark.parametrize("first_version", ["1.0.0", "^1.0.0"])
+    async def test_repeated_tuple_keeps_first_eligible_origin(
+        self, osv_requests, reverse, first_version
+    ):
+        cases = [
+            _origin_manifest("first/package.json", "demo-package", version=first_version),
+            _origin_manifest("last/package.json", "demo-package", padding=4),
+        ]
+        if reverse:
+            cases.reverse()
+        contents = {case[0].path: case[1] for case in cases}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        comments = await scan_manifest_changes([case[0] for case in cases], fetcher)
+
+        posts = [request for request in osv_requests if request.method == "POST"]
+        assert len(posts) == 1
+        assert json.loads(posts[0].content) == {
+            "queries": [
+                {"package": {"ecosystem": "npm", "name": "demo-package"}, "version": "1.0.0"}
+            ]
+        }
+        assert len(comments) == 1
+        first = cases[0]
+        comment = comments[0]
+        assert (comment.path, comment.line, comment.existing_code) == (
+            first[0].path,
+            first[2],
+            first[3],
+        )
+        assert comment.agent_prompt.startswith(f"In {first[0].path},")
+        assert "demo-package from 1.0.0" in comment.agent_prompt
+
+    @pytest.mark.asyncio
+    async def test_unchanged_tuple_does_not_suppress_later_eligible_origin(self, osv_requests):
+        first = _origin_manifest("first/package.json", "demo-package", changed=False)
+        last = _origin_manifest("last/package.json", "demo-package", padding=4)
+        contents = {first[0].path: first[1], last[0].path: last[1]}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        comments = await scan_manifest_changes([first[0], last[0], last[0]], fetcher)
+
+        posts = [request for request in osv_requests if request.method == "POST"]
+        assert len(posts) == 1
+        assert json.loads(posts[0].content) == {
+            "queries": [
+                {"package": {"ecosystem": "npm", "name": "demo-package"}, "version": "1.0.0"}
+            ]
+        }
+        assert len(comments) == 1
+        comment = comments[0]
+        assert (comment.path, comment.line, comment.existing_code) == (
+            last[0].path,
+            last[2],
+            last[3],
+        )
+        assert comment.agent_prompt.startswith(f"In {last[0].path},")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path,content,ecosystem,name,version",
+        [
+            (
+                "last/package.json",
+                '{"dependencies":{"demo-package":"2.0.0"}}',
+                "npm",
+                "demo-package",
+                "2.0.0",
+            ),
+            (
+                "last/package.json",
+                '{"dependencies":{"other-package":"1.0.0"}}',
+                "npm",
+                "other-package",
+                "1.0.0",
+            ),
+            ("requirements.txt", "demo-package==1.0.0", "PyPI", "demo-package", "1.0.0"),
+        ],
+        ids=["different-version", "different-name", "different-kind"],
+    )
+    async def test_distinct_tuples_keep_encounter_order_and_shared_advisory(
+        self, osv_requests, path, content, ecosystem, name, version
+    ):
+        first = _origin_manifest("first/package.json", "demo-package")
+        last = _file_diff(path, [_hunk(7, f"@@ -6,0 +7 @@\n+{content}\n")])
+        contents = {first[0].path: first[1], path: content}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        comments = await scan_manifest_changes([first[0], last, first[0]], fetcher)
+
+        posts = [request for request in osv_requests if request.method == "POST"]
+        assert len(posts) == 1
+        assert json.loads(posts[0].content) == {
+            "queries": [
+                {"package": {"ecosystem": "npm", "name": "demo-package"}, "version": "1.0.0"},
+                {"package": {"ecosystem": ecosystem, "name": name}, "version": version},
+            ]
+        }
+        assert len(comments) == 2
+        assert [(c.path, c.line, c.existing_code) for c in comments] == [
+            (first[0].path, first[2], first[3]),
+            (path, 7, content),
+        ]
+        assert [c.title for c in comments] == [
+            "Known vulnerabilities in demo-package@1.0.0",
+            f"Known vulnerabilities in {name}@{version}",
+        ]
+        assert all("SYNTH-OSV-1" in c.body for c in comments)
+        assert all(c.agent_prompt.startswith(f"In {c.path},") for c in comments)
+
+    @pytest.mark.asyncio
+    async def test_repeated_tuple_without_advisories_has_no_comments(self, origin_osv_http):
+        first = _origin_manifest("first/package.json", "safe-package")
+        last = _origin_manifest("last/package.json", "safe-package", padding=4)
+        contents = {first[0].path: first[1], last[0].path: last[1]}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        assert await scan_manifest_changes([first[0], last[0]], fetcher) == []
+
+        assert len(origin_osv_http) == 1
+        request = origin_osv_http[0]
+        assert request.method == "POST"
+        assert json.loads(request.content) == {
+            "queries": [
+                {"package": {"ecosystem": "npm", "name": "safe-package"}, "version": "1.0.0"}
+            ]
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path,content",
+        [
+            ("Dockerfile", "FROM example.invalid/demo:1.0.0"),
+            ("package.json", '{"dependencies":{"demo-package":""}}'),
+            ("package.json", '{"dependencies":{"demo-package":"^"}}'),
+        ],
+        ids=["unsupported-kind", "empty-version", "empty-normalized-version"],
+    )
+    async def test_repeated_ineligible_tuple_makes_no_request(self, osv_requests, path, content):
+        diff = _file_diff(path, [_hunk(1, f"@@ -0,0 +1 @@\n+{content}\n")])
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(return_value=content)
+
+        assert await scan_manifest_changes([diff, diff], fetcher) == []
+        assert osv_requests == []

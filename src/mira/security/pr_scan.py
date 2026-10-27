@@ -115,9 +115,10 @@ async def scan_manifest_changes(
             if not ver:
                 continue
             key = (pkg.kind, pkg.name, ver)
+            if key in hit_map:
+                continue
             queries.append(PackageQuery(ecosystem=pkg.kind, name=pkg.name, version=ver))
-            if key not in hit_map:
-                hit_map[key] = (f.path, hits[0][0], hits[0][1])
+            hit_map[key] = (f.path, hits[0][0], hits[0][1])
 
     if not queries:
         return []
