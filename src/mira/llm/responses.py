@@ -170,6 +170,9 @@ class ResponsesProvider(OpenAICompatibleProvider):
 
     # ── Overrides ────────────────────────────────────────────────────
 
+    def _apply_reasoning(self, body: dict, protocol: str = "responses") -> None:
+        super()._apply_reasoning(body, protocol=protocol)
+
     def _account_usage(self, data: dict) -> None:
         """Accumulate token counts from Responses API usage.
 
@@ -201,7 +204,7 @@ class ResponsesProvider(OpenAICompatibleProvider):
         if json_mode:
             body["text"] = {"format": {"type": "json_object"}}
             body["input"] = _ensure_json_hint(body["input"])
-        self._apply_reasoning(body)
+        self._apply_reasoning(body, protocol="responses")
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
             resp = await client.post(
@@ -242,7 +245,7 @@ class ResponsesProvider(OpenAICompatibleProvider):
             "temperature": temperature if temperature is not None else self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
         }
-        self._apply_reasoning(body)
+        self._apply_reasoning(body, protocol="responses")
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
             resp = await client.post(
@@ -259,10 +262,15 @@ class ResponsesProvider(OpenAICompatibleProvider):
                 self._no_forced_tool_choice.add(api_model)
                 body["tool_choice"] = "auto"
                 resp = await client.post(self._url, headers=self._build_headers(), json=body)
-            if resp.status_code == 400 and "reasoning" in body and "reasoning" in resp.text.lower():
+            if (
+                resp.status_code == 400
+                and self._has_reasoning(body)
+                and "reasoning" in resp.text.lower()
+            ):
                 logger.info("Model %s rejected reasoning effort; retrying without it", api_model)
                 self._no_reasoning.add(api_model)
-                body.pop("reasoning", None)
+                self._remove_reasoning(body)
+                self._apply_reasoning_off(body, protocol="responses")
                 body["temperature"] = (
                     temperature if temperature is not None else self.config.temperature
                 )
@@ -321,7 +329,7 @@ class ResponsesProvider(OpenAICompatibleProvider):
             "temperature": temperature if temperature is not None else self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
         }
-        self._apply_reasoning(body)
+        self._apply_reasoning(body, protocol="responses")
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
             resp = await client.post(
@@ -329,11 +337,16 @@ class ResponsesProvider(OpenAICompatibleProvider):
                 headers=self._build_headers(),
                 json=body,
             )
-            if resp.status_code == 400 and "reasoning" in body and "reasoning" in resp.text.lower():
+            if (
+                resp.status_code == 400
+                and self._has_reasoning(body)
+                and "reasoning" in resp.text.lower()
+            ):
                 api_model = _strip_model_prefix(model, self.config.base_url)
                 logger.info("Model %s rejected reasoning effort; retrying without it", api_model)
                 self._no_reasoning.add(api_model)
-                body.pop("reasoning", None)
+                self._remove_reasoning(body)
+                self._apply_reasoning_off(body, protocol="responses")
                 body["temperature"] = (
                     temperature if temperature is not None else self.config.temperature
                 )
