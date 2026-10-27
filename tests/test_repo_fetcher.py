@@ -32,6 +32,28 @@ def _make_targz(prefix: str, files: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher_type", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize("indexable_paths", [None, set(), {"src/keep.py"}])
+async def test_tarball_filters_excluded_paths(monkeypatch, fetcher_type, indexable_paths):
+    blob = _make_targz("synthetic-root", {"src/keep.py": "kept", "vendor/skip.py": "skipped"})
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=blob))
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=transport, **kwargs),
+    )
+
+    result = await fetcher_type("synthetic", "https://provider.example.invalid/api").repo_tarball(
+        "example", "app", "main", indexable_paths=indexable_paths
+    )
+
+    files = {"src/keep.py": "kept", "vendor/skip.py": "skipped"}
+    expected = files if indexable_paths is None else {p: files[p] for p in indexable_paths}
+    assert result == expected
+
+
 class TestStripTarball:
     def test_strips_top_level_dir(self):
         blob = _make_targz("acme-web-abc123", {"src/main.py": "x = 1", "README.md": "# hi"})
