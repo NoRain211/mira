@@ -8,7 +8,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **PR reviews publish a check run on the head commit**, so the PR and checks pages show a live status row: in progress while the review runs, success/failure on completion (neutral on GitHub when the walkthrough summary was not generated). GitHub uses the Checks API; Forgejo — which has no Checks API — adapts the lifecycle onto commit statuses with a single fixed context that is replaced in place per SHA (its statuses have no neutral state, so a neutral conclusion displays as success).
+- **PR reviews publish a check run on the head commit**, so the PR and checks pages show a live status row: in progress while the review runs, success/failure on completion (neutral on GitHub when the walkthrough summary was not generated). GitHub uses the Checks API; Forgejo — which has no Checks API — adapts the lifecycle onto commit statuses with a single fixed context that is replaced in place per SHA (its statuses have no neutral state, so a neutral conclusion displays as success). The completed run's expandable details section shows the review stats (files reviewed, comment count with the severity breakdown) so the status row is informative without opening the walkthrough comment.
 
 ### Changed
 

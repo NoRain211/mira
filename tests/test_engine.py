@@ -895,6 +895,14 @@ class TestCheckRunLifecycle:
         finish = mock_provider.finish_check_run.await_args
         assert finish.args[1] == 42
         assert finish.args[2] == "success"
+        # The expandable DETAILS section carries the review stats.
+        details = finish.kwargs["details"]
+        assert "2 files reviewed" in details
+        assert "3 comments" in details
+        # 1 fixture blocker (eval) + the secrets scanner blocking the
+        # hard-coded API key in the fixture diff, leaving 1 warning.
+        assert "2 blockers" in details
+        assert "1 warning" in details
 
     @pytest.mark.asyncio
     async def test_review_pr_completes_check_run_with_failure_on_error(
@@ -913,6 +921,8 @@ class TestCheckRunLifecycle:
         finish = mock_provider.finish_check_run.await_args
         assert finish.args[1] == 42
         assert finish.args[2] == "failure"
+        # No result on a failed review → nothing to show in DETAILS.
+        assert finish.kwargs["details"] == ""
 
     @pytest.mark.asyncio
     async def test_review_pr_dry_run_skips_check_runs(

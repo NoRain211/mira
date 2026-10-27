@@ -116,8 +116,13 @@ class BaseProvider(abc.ABC):
         *,
         title: str = "",
         summary: str = "",
+        details: str = "",
     ) -> None:
-        """Finish a check run with a conclusion (success/failure/neutral)."""
+        """Finish a check run with a conclusion (success/failure/neutral).
+
+        ``details`` is the expanded detail text (e.g. review stats); platforms
+        without an expandable details area (Forgejo commit statuses) ignore it.
+        """
         return
 
     async def add_label(self, pr_info: PRInfo, label: str) -> None:

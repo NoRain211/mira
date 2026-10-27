@@ -699,6 +699,7 @@ class TestCheckRuns:
                 "success",
                 title="Code Review Complete",
                 summary="Review finished successfully.",
+                details="2 files reviewed · 1 comment",
             )
 
         args, kwargs = mock_patch.call_args
@@ -708,6 +709,8 @@ class TestCheckRuns:
         assert body["conclusion"] == "success"
         assert body["completed_at"]
         assert body["output"]["title"] == "Code Review Complete"
+        # The DETAILS section on GitHub is output.text.
+        assert body["output"]["text"] == "2 files reviewed · 1 comment"
 
     @pytest.mark.asyncio
     async def test_finish_raises_provider_error_on_404(self):

@@ -404,8 +404,13 @@ class ForgejoProvider(BaseProvider):
         *,
         title: str = "",
         summary: str = "",
+        details: str = "",
     ) -> None:
-        """Re-post the commit status with the terminal state for its SHA."""
+        """Re-post the commit status with the terminal state for its SHA.
+
+        ``details`` is accepted for interface parity with the Checks API
+        path, but commit statuses have no details area.
+        """
         if run_id is None or not pr_info.head_sha:
             return
         # Forgejo's commit statuses accept success/failure/error | pending;

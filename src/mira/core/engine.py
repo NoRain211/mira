@@ -60,6 +60,7 @@ from mira.models import (
     ThreadDecision,
     UnresolvedThread,
     WalkthroughResult,
+    _format_stats_breakdown,
     build_review_stats,
 )
 from mira.providers.base import BaseProvider, CheckConclusion
@@ -484,7 +485,26 @@ class ReviewEngine:
             logger.warning("Failed to start check run for %s: %s", pr_info.url, exc)
             return None
 
-    async def _finish_check(self, pr_info: PRInfo, run_id: int | None, status_key: str) -> None:
+    @staticmethod
+    def _check_details(result: ReviewResult | None) -> str:
+        """Expandable DETAILS text for the finished check run (review stats)."""
+        if result is None:
+            return ""
+        parts: list[str] = []
+        if result.reviewed_files:
+            parts.append(
+                f"{result.reviewed_files} file{'s' if result.reviewed_files != 1 else ''} reviewed"
+            )
+        if result.comments:
+            stats = _format_stats_breakdown(build_review_stats(result.comments))
+            parts.append(
+                f"{len(result.comments)} comment{'s' if len(result.comments) != 1 else ''}{stats}"
+            )
+        return " · ".join(parts)
+
+    async def _finish_check(
+        self, pr_info: PRInfo, run_id: int | None, status_key: str, result: ReviewResult | None
+    ) -> None:
         """Best-effort: complete the check run (success/failure/neutral)."""
         if run_id is None:
             return
@@ -496,6 +516,7 @@ class ReviewEngine:
                 conclusion,
                 title=title,
                 summary=summary,
+                details=self._check_details(result),
             )
         except Exception as exc:
             logger.warning("Failed to finish check run for %s: %s", pr_info.url, exc)
@@ -601,13 +622,13 @@ class ReviewEngine:
         try:
             result = await self._review_pr(pr_info)
         except BaseException:
-            await self._finish_check(pr_info, run_id, "failure")
+            await self._finish_check(pr_info, run_id, "failure", None)
             raise
         # Neutral only when a walkthrough was expected (enabled) but not
         # generated; a disabled/skipped walkthrough is not a warning.
         walkthrough_missing = self.config.review.walkthrough and result.walkthrough is None
         status_key = "neutral" if walkthrough_missing else "success"
-        await self._finish_check(pr_info, run_id, status_key)
+        await self._finish_check(pr_info, run_id, status_key, result)
         return result
 
     async def _review_pr(self, pr_info: PRInfo) -> ReviewResult:

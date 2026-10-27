@@ -699,8 +699,13 @@ class GitHubProvider(BaseProvider):
         *,
         title: str = "",
         summary: str = "",
+        details: str = "",
     ) -> None:
-        """Complete an in-progress check run with a conclusion."""
+        """Complete an in-progress check run with a conclusion.
+
+        ``details`` goes into the check run's expandable DETAILS section
+        (``output.text``); an empty string leaves the box blank.
+        """
         if run_id is None:
             return
         token = await self._resolve_token()
@@ -713,7 +718,7 @@ class GitHubProvider(BaseProvider):
             "output": {
                 "title": title or CHECK_RUN_NAME,
                 "summary": summary,
-                "text": "",
+                "text": details,
             },
         }
         try:
