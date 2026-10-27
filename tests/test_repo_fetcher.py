@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import tarfile
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -64,6 +65,153 @@ def _patch_client(get_side_effect):
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     return patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "main",
+        "feature/topic",
+        "feature+draft",
+        "feature&mode=bad",
+        "feature#frag",
+        "feature%2Bdraft",
+    ],
+)
+async def test_file_content_preserves_ref(fetcher, ref):
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        if fetcher is ForgejoRepoFetcher:
+            return httpx.Response(200, json={"content": "c3ludGhldGljIGNvbnRlbnQ="})
+        return httpx.Response(200, text="synthetic content")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    with patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client):
+        content = await fetcher("synthetic", "https://forge.example.invalid/api").file_content(
+            "example", "app", "src/main.py", ref
+        )
+
+    assert content == "synthetic content"
+    assert len(requests) == 1
+    assert requests[0].url.params.multi_items() == [("ref", ref)]
+    assert requests[0].url.fragment == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "encoded_path"),
+    [
+        ("src/hash#name.py", b"src/hash%23name.py"),
+        ("src/question?name.py", b"src/question%3Fname.py"),
+        ("src/literal%2Fname.py", b"src/literal%252Fname.py"),
+        ("src/nested/main.py", b"src/nested/main.py"),
+    ],
+)
+async def test_github_file_content_preserves_path(path, encoded_path):
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        return httpx.Response(200, text="synthetic content")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    with patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client):
+        content = await GitHubRepoFetcher(
+            "synthetic", "https://github.example.invalid/api"
+        ).file_content("example", "app", path, "main")
+
+    assert content == "synthetic content"
+    assert len(requests) == 1
+    assert (
+        requests[0].url.raw_path
+        == b"/api/repos/example/app/contents/" + encoded_path + b"?ref=main"
+    )
+    assert requests[0].url.params.multi_items() == [("ref", "main")]
+    assert requests[0].url.fragment == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fetcher", "encoded_path"),
+    [
+        (
+            GitLabRepoFetcher,
+            b"/api/projects/example%2Fapp/repository/files/src%2Fa%23b%3Fc%252F.py/raw",
+        ),
+        (ForgejoRepoFetcher, b"/api/repos/example/app/contents/src%2Fa%23b%3Fc%252F.py"),
+    ],
+)
+async def test_file_content_retains_encoded_path(fetcher, encoded_path):
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        if fetcher is ForgejoRepoFetcher:
+            return httpx.Response(200, json={"content": "c3ludGhldGljIGNvbnRlbnQ="})
+        return httpx.Response(200, text="synthetic content")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    with patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client):
+        content = await fetcher("synthetic", "https://forge.example.invalid/api").file_content(
+            "example", "app", "src/a#b?c%2F.py", "feature/topic"
+        )
+
+    assert content == "synthetic content"
+    assert len(requests) == 1
+    assert requests[0].url.raw_path == encoded_path + b"?ref=feature%2Ftopic"
+    assert requests[0].url.params.multi_items() == [("ref", "feature/topic")]
+    assert requests[0].url.fragment == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize("outcome", [404, 503, "timeout"])
+async def test_file_content_failure_returns_none_and_releases_semaphore(fetcher, outcome):
+    semaphore = asyncio.Semaphore(1)
+    acquired = []
+
+    def serve(request):
+        acquired.append(semaphore.locked())
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("synthetic timeout", request=request)
+        return httpx.Response(outcome)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    with patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client):
+        content = await fetcher("synthetic", "https://forge.example.invalid/api").file_content(
+            "example", "app", "src/main.py", "feature+draft", semaphore
+        )
+
+    assert content is None
+    assert acquired == [True]
+    assert not semaphore.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+async def test_file_content_success_releases_semaphore(fetcher):
+    semaphore = asyncio.Semaphore(1)
+    acquired = []
+
+    def serve(request):
+        acquired.append(semaphore.locked())
+        if fetcher is ForgejoRepoFetcher:
+            return httpx.Response(200, json={"content": "c3ludGhldGljIGNvbnRlbnQ="})
+        return httpx.Response(200, text="synthetic content")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(serve))
+    with patch("mira.platforms.fetch.httpx.AsyncClient", return_value=client):
+        content = await fetcher("synthetic", "https://forge.example.invalid/api").file_content(
+            "example", "app", "src/main.py", "feature+draft", semaphore
+        )
+
+    assert content == "synthetic content"
+    assert acquired == [True]
+    assert not semaphore.locked()
 
 
 class TestGitLabTreePagination:
