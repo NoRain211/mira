@@ -8,6 +8,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from mira.index._store_shared import _StoreSharedMixin
 from mira.models import PRFingerprint
@@ -1731,6 +1732,27 @@ def search_packages_org_wide_sqlite(
 
     rows.sort(key=lambda r: (r["name"].lower(), r["owner"], r["repo"]))
     return rows[:limit]
+
+
+def count_vulnerabilities_org_wide_sqlite() -> dict[str, int]:
+    """Count persisted vulnerabilities by raw severity across SQLite stores."""
+    index_dir = os.environ.get("MIRA_INDEX_DIR", _INDEX_DIR)
+    counts: dict[str, int] = {}
+    for _platform, _owner, _repo, db_path in _iter_repo_dbs(index_dir):
+        try:
+            # Read-only mode also prevents recreating a DB removed after discovery.
+            conn = sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)
+            try:
+                rows = conn.execute(
+                    "SELECT severity, COUNT(*) FROM vulnerabilities GROUP BY severity"
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+        for severity, count in rows:
+            counts[severity] = counts.get(severity, 0) + count
+    return counts
 
 
 def list_vulnerabilities_org_wide_sqlite(limit: int = 1000) -> list[dict]:
