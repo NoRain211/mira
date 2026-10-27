@@ -62,7 +62,7 @@ from mira.models import (
     WalkthroughResult,
     build_review_stats,
 )
-from mira.providers.base import BaseProvider
+from mira.providers.base import BaseProvider, CheckConclusion
 from mira.security.secrets_scan import scan_secrets
 
 logger = logging.getLogger(__name__)
@@ -450,6 +450,56 @@ class ReviewEngine:
         await self.provider.post_comment(pr_info, placeholder)
         return await self.provider.find_bot_comment(pr_info, WALKTHROUGH_MARKER)
 
+    _CHECK_CONCLUSIONS: dict[str, tuple[CheckConclusion, str, str]] = {
+        "success": (
+            "success",
+            "Code Review Complete",
+            "Review finished successfully. Findings (if any) were posted as PR/file comments.",
+        ),
+        "failure": (
+            "failure",
+            "Code Review Failed",
+            "The review stopped due to an unexpected error and did not produce findings.",
+        ),
+        "neutral": (
+            "neutral",
+            "Code Review Completed with Warnings",
+            "Review finished, but the walkthrough summary could not be "
+            "generated. Findings (if any) were posted as PR/file comments.",
+        ),
+    }
+
+    async def _start_check(self, pr_info: PRInfo) -> int | None:
+        """Best-effort: start a check run for the head commit; never fails a review."""
+        if self.dry_run or self.provider is None or not pr_info.head_sha:
+            return None
+        try:
+            return await self.provider.start_check_run(
+                pr_info,
+                title="Code Review In Progress",
+                summary="Mira is analyzing your code changes…",
+                details_url=pr_info.url,
+            )
+        except Exception as exc:
+            logger.warning("Failed to start check run for %s: %s", pr_info.url, exc)
+            return None
+
+    async def _finish_check(self, pr_info: PRInfo, run_id: int | None, status_key: str) -> None:
+        """Best-effort: complete the check run (success/failure/neutral)."""
+        if run_id is None:
+            return
+        conclusion, title, summary = self._CHECK_CONCLUSIONS[status_key]
+        try:
+            await self.provider.finish_check_run(  # type: ignore[union-attr]
+                pr_info,
+                run_id,
+                conclusion,
+                title=title,
+                summary=summary,
+            )
+        except Exception as exc:
+            logger.warning("Failed to finish check run for %s: %s", pr_info.url, exc)
+
     @staticmethod
     def _format_failure_notice(exc: BaseException) -> str:
         """Format a user-safe failure notice without model names or internal errors."""
@@ -540,7 +590,25 @@ class ReviewEngine:
             return []
 
     async def review_pr(self, pr_url: str) -> ReviewResult:
-        """Full pipeline: fetch PR -> review -> post results.
+        """Fetch PR metadata, publish a check run, and run the review pipeline."""
+        if not self.provider:
+            raise RuntimeError("A provider is required for PR review")
+
+        pr_info = await self.provider.get_pr_info(pr_url)
+        self._pr_info = pr_info
+
+        run_id = await self._start_check(pr_info)
+        try:
+            result = await self._review_pr(pr_info)
+        except BaseException:
+            await self._finish_check(pr_info, run_id, "failure")
+            raise
+        status_key = "neutral" if result.walkthrough is None else "success"
+        await self._finish_check(pr_info, run_id, status_key)
+        return result
+
+    async def _review_pr(self, pr_info: PRInfo) -> ReviewResult:
+        """Core review pipeline: review the fetched PR and post results.
 
         Runs thread resolution and diff fetching in parallel to reduce latency.
         """
@@ -549,11 +617,7 @@ class ReviewEngine:
 
         _review_start = _time.monotonic()
 
-        if not self.provider:
-            raise RuntimeError("A provider is required for PR review")
-
-        pr_info = await self.provider.get_pr_info(pr_url)
-        self._pr_info = pr_info
+        assert self.provider is not None
 
         async def _resolve_threads() -> tuple[
             int, int, list[UnresolvedThread], list[ThreadDecision]

@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **PR reviews publish a check run on the head commit**, so the PR and checks pages show a live status row: in progress while the review runs, success/failure on completion (neutral on GitHub when the walkthrough summary was not generated). GitHub uses the Checks API; Forgejo — which has no Checks API — adapts the lifecycle onto commit statuses with a single fixed context that is replaced in place per SHA (its statuses have no neutral state, so a neutral conclusion displays as success).
+
+### Changed
+
+- **GitHub App permission: `checks: read & write`** (previously `commit statuses: read & write`). Existing installations must add the new permission to keep seeing status updates; a missing permission is logged once and the review proceeds without the status.
+
 ## [0.10.0] — 2026-10-26
 
 ### Security
