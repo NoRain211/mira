@@ -51,19 +51,28 @@ def _responses_input(messages: list[dict]) -> list[dict]:
         if role == "assistant":
             content = msg.get("content")
             tool_calls = msg.get("tool_calls") or []
-            if not content and not tool_calls:
+            reasoning_items = msg.get("reasoning_items") or []
+            if not content and not tool_calls and not reasoning_items:
                 continue  # skip empty assistant
+            # Replay the provider's reasoning items before the assistant text
+            # and function calls. OpenAI uses this for encrypted reasoning;
+            # DeepSeek merges reasoning input items into the adjacent message.
+            for item in reasoning_items:
+                items.append(dict(item))
             if content:
                 items.append({"type": "message", "role": "assistant", "content": content})
             for tc in tool_calls:
                 args = tc.get("function", {}).get("arguments", "{}")
                 if isinstance(args, dict):
                     args = json.dumps(args)
+                call_id = tc.get("id", "")
                 items.append(
                     {
                         "type": "function_call",
-                        "id": tc.get("id", ""),
-                        "call_id": tc.get("id", ""),
+                        # ``id`` identifies the output item; ``call_id`` pairs
+                        # the call with its function_call_output.
+                        "id": tc.get("provider_id") or call_id,
+                        "call_id": call_id,
                         "name": tc.get("function", {}).get("name", ""),
                         "arguments": args,
                     }
@@ -124,6 +133,7 @@ def _response_message(data: dict) -> dict:
     output = data.get("output", [])
     text_parts: list[str] = []
     tool_calls: list[dict] = []
+    reasoning_items: list[dict] = []
 
     for item in output:
         itype = item.get("type", "")
@@ -133,6 +143,10 @@ def _response_message(data: dict) -> dict:
                 for part in content:
                     if part.get("type") in ("output_text", "text"):
                         text_parts.append(part.get("text", ""))
+        elif itype == "reasoning":
+            # Keep the provider's item intact (encrypted content, signature,
+            # summary, or plain reasoning text) so it can be replayed.
+            reasoning_items.append(dict(item))
         elif itype == "function_call":
             # In Responses API, name/arguments are direct on the item
             name = item.get("name", "")
@@ -141,13 +155,17 @@ def _response_message(data: dict) -> dict:
             tool_calls.append(
                 {
                     "id": call_id,
+                    "provider_id": item.get("id", ""),
                     "type": "function",
                     "function": {"name": name, "arguments": arguments},
                 }
             )
 
     content = "".join(text_parts) if text_parts else (None if tool_calls else "")
-    return {"role": "assistant", "content": content, "tool_calls": tool_calls}
+    message = {"role": "assistant", "content": content, "tool_calls": tool_calls}
+    if reasoning_items:
+        message["reasoning_items"] = reasoning_items
+    return message
 
 
 # ── Provider class ──────────────────────────────────────────────────
