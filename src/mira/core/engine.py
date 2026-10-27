@@ -603,7 +603,10 @@ class ReviewEngine:
         except BaseException:
             await self._finish_check(pr_info, run_id, "failure")
             raise
-        status_key = "neutral" if result.walkthrough is None else "success"
+        # Neutral only when a walkthrough was expected (enabled) but not
+        # generated; a disabled/skipped walkthrough is not a warning.
+        walkthrough_missing = self.config.review.walkthrough and result.walkthrough is None
+        status_key = "neutral" if walkthrough_missing else "success"
         await self._finish_check(pr_info, run_id, status_key)
         return result
 

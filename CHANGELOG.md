@@ -12,7 +12,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **GitHub App permission: `checks: read & write`** (previously `commit statuses: read & write`). Existing installations must add the new permission to keep seeing status updates; a missing permission is logged once and the review proceeds without the status.
+- **GitHub App permission: `checks: read & write`** (newly required; earlier releases needed no check permission). Existing installations must add the permission to see review status updates; a missing permission is logged and the review proceeds without the status.
 
 ## [0.10.0] — 2026-10-26
 

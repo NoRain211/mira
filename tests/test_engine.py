@@ -947,6 +947,26 @@ class TestCheckRunLifecycle:
         assert mock_provider.finish_check_run.await_args.args[2] == "neutral"
 
     @pytest.mark.asyncio
+    async def test_review_pr_disabled_walkthrough_not_neutral(
+        self, mock_llm: LLMProvider, mock_provider: AsyncMock
+    ):
+        """A disabled (not failed) missing walkthrough is a plain success."""
+        pr_info = await mock_provider.get_pr_info("https://github.com/test/repo/pull/1")
+        mock_provider.get_pr_info.return_value = replace(pr_info, head_sha="deadbeef")
+        mock_provider.get_all_bot_threads = AsyncMock(return_value=[])
+        mock_provider.start_check_run = AsyncMock(return_value=42)
+        mock_llm.walkthrough = AsyncMock(side_effect=RuntimeError("irrelevant"))
+
+        config = MiraConfig()
+        config.review.walkthrough = False
+        engine = ReviewEngine(config=config, llm=mock_llm, provider=mock_provider)
+        result = await engine.review_pr("https://github.com/test/repo/pull/1")
+
+        assert result is not None
+        mock_provider.finish_check_run.assert_awaited_once()
+        assert mock_provider.finish_check_run.await_args.args[2] == "success"
+
+    @pytest.mark.asyncio
     async def test_check_run_provider_errors_never_fail_the_review(
         self, mock_llm: LLMProvider, mock_provider: AsyncMock
     ):

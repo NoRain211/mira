@@ -678,10 +678,12 @@ class GitHubProvider(BaseProvider):
         except (ConnectionError, TimeoutError, httpx.TransportError) as e:
             raise ProviderError(f"GitHub POST {url} failed: {e}") from e
         if resp.status_code == 403:
-            # The installation has not granted `checks: write` — customer-side;
-            # skip the check run (and logs at WARNING from the engine).
+            # Check-run write is App-only (`checks: write` is granted to
+            # GitHub App installations, not to personal tokens). Skip the
+            # check run; the engine logs no status was published.
             logger.warning(
-                "GitHub check-run create needs checks:write permission: %s",
+                "GitHub check-run create forbidden (needs a GitHub App "
+                "installation with checks:write granted): %s",
                 resp.text[:300],
             )
             return None
