@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
 from fastapi import Request
@@ -127,6 +128,8 @@ def list_activity(limit: int = 200, repo: str = "", q: str = "") -> ActivityResp
     (newest first), attaching owner/repo to each. Supports an optional repo
     filter ("owner/repo") and a case-insensitive search `q` matched across the
     PR title, PR number, repo slug, and categories (multi-word queries AND).
+    Search scans history until 500 matches per repo; an empty search keeps
+    the recent-500 feed. Matching timestamp ties use ascending event IDs.
     """
     terms = [t for t in q.lower().split() if t]
 
@@ -143,33 +146,43 @@ def list_activity(limit: int = 200, repo: str = "", q: str = "") -> ActivityResp
                 repo_record.owner, repo_record.repo, platform=repo_record.platform
             )
             try:
-                for e in store.list_review_events(limit=500):
-                    if terms:
-                        haystack = f"{e.pr_title} #{e.pr_number} {slug} {e.categories}".lower()
-                        if not all(t in haystack for t in terms):
-                            continue
-                    events.append(
-                        ActivityEventModel(
-                            id=e.id,
-                            pr_number=e.pr_number,
-                            pr_title=e.pr_title,
-                            pr_url=e.pr_url,
-                            comments_posted=e.comments_posted,
-                            blockers=e.blockers,
-                            warnings=e.warnings,
-                            suggestions=e.suggestions,
-                            files_reviewed=e.files_reviewed,
-                            lines_changed=e.lines_changed,
-                            tokens_used=e.tokens_used,
-                            duration_ms=e.duration_ms,
-                            categories=e.categories,
-                            created_at=e.created_at,
-                            owner=repo_record.owner,
-                            repo=repo_record.repo,
-                            author_username=e.author,
-                            author_avatar_url=e.author_avatar_url,
+                source = (
+                    store.iter_review_events()
+                    if terms
+                    else nullcontext(store.list_review_events(limit=500))
+                )
+                with source as review_events:
+                    matched = 0
+                    for e in review_events:
+                        if terms:
+                            haystack = f"{e.pr_title} #{e.pr_number} {slug} {e.categories}".lower()
+                            if not all(t in haystack for t in terms):
+                                continue
+                        events.append(
+                            ActivityEventModel(
+                                id=e.id,
+                                pr_number=e.pr_number,
+                                pr_title=e.pr_title,
+                                pr_url=e.pr_url,
+                                comments_posted=e.comments_posted,
+                                blockers=e.blockers,
+                                warnings=e.warnings,
+                                suggestions=e.suggestions,
+                                files_reviewed=e.files_reviewed,
+                                lines_changed=e.lines_changed,
+                                tokens_used=e.tokens_used,
+                                duration_ms=e.duration_ms,
+                                categories=e.categories,
+                                created_at=e.created_at,
+                                owner=repo_record.owner,
+                                repo=repo_record.repo,
+                                author_username=e.author,
+                                author_avatar_url=e.author_avatar_url,
+                            )
                         )
-                    )
+                        matched += 1
+                        if terms and matched >= 500:
+                            break
             finally:
                 store.close()
         except Exception:
