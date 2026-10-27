@@ -367,3 +367,122 @@ class TestScanManifestChanges:
         fetcher = MagicMock()
         comments = await scan_manifest_changes([], fetcher)
         assert comments == []
+
+
+def _origin_manifest(path, package, *, padding=0, changed=True):
+    data = {"dependencies": {package: "1.0.0"}}
+    if not changed:
+        data = {"description": "unrelated update", **data}
+    content = "\n" * padding + json.dumps(data, indent=2) + "\n"
+    needle = json.dumps(package) if changed else '"description"'
+    line, text = next((i, text) for i, text in enumerate(content.splitlines(), 1) if needle in text)
+    hunk = HunkInfo(
+        source_start=line - 1,
+        source_length=0,
+        target_start=line,
+        target_length=1,
+        content=f"@@ -{line - 1},0 +{line} @@\n+{text}\n",
+    )
+    diff = FileDiff(path=path, change_type=FileChangeType.MODIFIED, hunks=[hunk], added_lines=1)
+    return diff, content, line, text
+
+
+@pytest.fixture
+def origin_osv_http():
+    def respond(request):
+        if request.method == "POST" and request.url.path == "/v1/querybatch":
+            queries = json.loads(request.content)["queries"]
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"vulns": [{"id": "SYNTH-" + q["package"]["name"]}]}
+                        if q["package"]["name"].startswith("vuln-")
+                        else {}
+                        for q in queries
+                    ]
+                },
+            )
+        if request.method == "GET" and request.url.path.startswith("/v1/vulns/SYNTH-vuln-"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": request.url.path.rsplit("/", 1)[-1],
+                    "summary": "Synthetic advisory",
+                    "database_specific": {"severity": "HIGH"},
+                    "references": [{"type": "ADVISORY", "url": "https://example.invalid/advisory"}],
+                },
+            )
+        pytest.fail(f"Unexpected OSV request: {request.method} {request.url.path}")
+
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    with patch(
+        "mira.security.osv.httpx.AsyncClient",
+        side_effect=lambda **kwargs: client_type(transport=transport, **kwargs),
+    ):
+        yield
+
+
+class TestManifestCommentOrigins:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("last_state", ["safe", "unchanged", "unreadable"])
+    @pytest.mark.parametrize("reverse", [False, True])
+    async def test_finding_keeps_its_source_manifest(self, origin_osv_http, last_state, reverse):
+        first = _origin_manifest("first/package.json", "vuln-first")
+        last = _origin_manifest(
+            "last/package.json", "safe-dep", padding=4, changed=last_state != "unchanged"
+        )
+        contents = {
+            first[0].path: first[1],
+            last[0].path: None if last_state == "unreadable" else last[1],
+        }
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+        files = [last[0], first[0]] if reverse else [first[0], last[0]]
+
+        comments = await scan_manifest_changes(files, fetcher)
+
+        assert len(comments) == 1
+        comment = comments[0]
+        assert (comment.path, comment.line, comment.existing_code) == (
+            first[0].path,
+            first[2],
+            first[3],
+        )
+        assert comment.agent_prompt.startswith(f"In {first[0].path},")
+
+    @pytest.mark.asyncio
+    async def test_distinct_findings_keep_distinct_locations(self, origin_osv_http):
+        cases = [
+            _origin_manifest("first/package.json", "vuln-first"),
+            _origin_manifest("last/package.json", "vuln-last", padding=4),
+        ]
+        contents = {case[0].path: case[1] for case in cases}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        comments = await scan_manifest_changes([case[0] for case in cases], fetcher)
+
+        assert len(comments) == 2
+        assert {(c.path, c.line, c.existing_code) for c in comments} == {
+            (case[0].path, case[2], case[3]) for case in cases
+        }
+        assert all(c.agent_prompt.startswith(f"In {c.path},") for c in comments)
+
+    @pytest.mark.asyncio
+    async def test_repeated_package_uses_first_matching_location(self, origin_osv_http):
+        first = _origin_manifest("first/package.json", "vuln-shared")
+        last = _origin_manifest("last/package.json", "vuln-shared", padding=4)
+        contents = {first[0].path: first[1], last[0].path: last[1]}
+        fetcher = MagicMock()
+        fetcher.fetch = AsyncMock(side_effect=contents.get)
+
+        comments = await scan_manifest_changes([first[0], last[0]], fetcher)
+
+        assert comments
+        assert all(
+            (c.path, c.line, c.existing_code) == (first[0].path, first[2], first[3])
+            for c in comments
+        )
+        assert all(c.agent_prompt.startswith(f"In {first[0].path},") for c in comments)
