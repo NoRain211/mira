@@ -5,12 +5,14 @@ Forgejo has no Checks API; check runs are adapted onto commit statuses.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
 
-from mira.exceptions import ProviderError
+from mira.exceptions import ConfigError, ProviderError
 from mira.models import PRInfo
+from mira.platforms import profiles
 from mira.providers.forgejo import ForgejoProvider
 
 
@@ -40,6 +42,47 @@ class _FakeClient:
 
 def _patch(handler):
     return patch("mira.providers.forgejo.httpx.AsyncClient", lambda *a, **k: _FakeClient(handler))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("subpath", ["", "/forgejo"])
+async def test_compare_diff_sends_token_to_configured_instance(monkeypatch, subpath):
+    monkeypatch.setenv("MIRA_FORGEJO_API_URL", f"https://git.acme.test{subpath}/api/v1/")
+    monkeypatch.delenv("MIRA_FORGEJO_BASE_URL", raising=False)
+    monkeypatch.delenv("MIRA_PLATFORMS_JSON_PATH", raising=False)
+    profiles._load.cache_clear()
+    requests = []
+
+    def handler(method, url, **kw):
+        requests.append((method, url, kw["headers"]))
+        response = _FakeResp()
+        response.text = "diff --git a/file b/file"
+        return response
+
+    pr = PRInfo(
+        title="Example",
+        description="",
+        base_branch="main",
+        head_branch="feature",
+        url=f"https://git.acme.test{subpath}/alice/private-repo/pulls/1",
+        number=1,
+        owner="alice",
+        repo="private-repo",
+        platform="forgejo",
+    )
+    try:
+        with _patch(handler):
+            diff = await ForgejoProvider("dummy-token").get_compare_diff(pr, "base", "head")
+        assert diff == "diff --git a/file b/file"
+        assert requests == [
+            (
+                "GET",
+                f"https://git.acme.test{subpath}/alice/private-repo/compare/base...head.diff",
+                {"Authorization": "token dummy-token", "Accept": "text/plain"},
+            )
+        ]
+    finally:
+        profiles._load.cache_clear()
 
 
 class TestGetRepoPermission:
@@ -218,3 +261,63 @@ class TestCheckRuns:
         with _patch(handler):
             assert await provider.start_check_run(self._pr_info(head_sha="")) is None
             assert called == []
+
+
+class TestForgejoURLs:
+    @pytest.fixture(autouse=True)
+    def isolate_profiles(self, monkeypatch):
+        monkeypatch.delenv("MIRA_FORGEJO_API_URL", raising=False)
+        monkeypatch.delenv("MIRA_FORGEJO_BASE_URL", raising=False)
+        monkeypatch.delenv("MIRA_PLATFORMS_JSON_PATH", raising=False)
+        profiles._load.cache_clear()
+        yield
+        profiles._load.cache_clear()
+
+    def test_default_web_base(self):
+        assert ForgejoProvider("dummy-token")._base == "https://codeberg.org"
+
+    @pytest.mark.parametrize(
+        ("api_url", "base_url"),
+        [
+            ("https://git.acme.test/api/v1", "https://git.acme.test"),
+            ("https://git.acme.test/api/v1/", "https://git.acme.test"),
+            ("https://git.acme.test/forgejo/api/v1/", "https://git.acme.test/forgejo"),
+            ("http://localhost:3000/git/api/v1", "http://localhost:3000/git"),
+        ],
+    )
+    def test_infers_web_base(self, monkeypatch, api_url, base_url):
+        monkeypatch.setenv("MIRA_FORGEJO_API_URL", api_url)
+        assert ForgejoProvider("dummy-token")._base == base_url
+
+    @pytest.mark.parametrize(
+        "api_url",
+        [
+            "https://git.acme.test/custom-api",
+            "https://git.acme.test/api/v10",
+            "https://[invalid/api/v1",
+        ],
+    )
+    def test_cannot_infer_raises_config_error(self, monkeypatch, api_url):
+        monkeypatch.setenv("MIRA_FORGEJO_API_URL", api_url)
+        with pytest.raises(ConfigError, match="Cannot infer MIRA_FORGEJO_BASE_URL"):
+            ForgejoProvider("dummy-token")
+
+    @pytest.mark.parametrize(
+        "api_url", ["https://git.acme.test/api/v1", "https://api.acme.test/custom"]
+    )
+    def test_explicit_base_takes_precedence(self, monkeypatch, api_url):
+        monkeypatch.setenv("MIRA_FORGEJO_API_URL", api_url)
+        monkeypatch.setenv("MIRA_FORGEJO_BASE_URL", "https://web.acme.test/forgejo/")
+        assert ForgejoProvider("dummy-token")._base == "https://web.acme.test/forgejo"
+
+    @pytest.mark.parametrize("explicit_base", [None, "https://web.acme.test/forgejo"])
+    def test_profile_override(self, monkeypatch, tmp_path, explicit_base):
+        profile = {"api_url": "https://git.acme.test/forgejo/api/v1"}
+        if explicit_base:
+            profile["base_url"] = explicit_base
+        custom = tmp_path / "platforms.json"
+        custom.write_text(json.dumps({"forgejo": profile}))
+        monkeypatch.setenv("MIRA_PLATFORMS_JSON_PATH", str(custom))
+        assert ForgejoProvider("dummy-token")._base == (
+            explicit_base or "https://git.acme.test/forgejo"
+        )
