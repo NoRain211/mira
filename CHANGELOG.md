@@ -6,6 +6,23 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-10-28
+
+### Fixed
+
+- **Dashboard charts include the complete review history.** Time-series metrics no longer stop at the newest 500 reviews per repository, so older dates, categories, and totals remain visible.
+- **Activity search finds older reviews.** Search scans persisted history before applying the 500-match limit per repository; the unfiltered recent-activity feed is unchanged.
+- **SQLite vulnerability summaries report persisted alerts.** Organization-wide severity counts now include alerts from repository databases, matching the vulnerability listing.
+- **Invalid walkthroughs are retried once.** Empty summaries and leaked tool-call XML are rejected; if the retry also fails, the PR placeholder reports that the walkthrough could not be generated.
+- **Repository file requests preserve refs and paths.** GitHub, GitLab, and Forgejo correctly encode refs containing query delimiters or literal percent sequences, and GitHub content paths preserve filename delimiters.
+- **GitLab and Forgejo archive fetches honor path filters.** Excluded files are discarded during tarball extraction instead of being decoded and retained in memory.
+- **Incomplete repository trees are rejected.** Truncated GitHub trees and incomplete GitLab or Forgejo pagination no longer silently produce partial indexes.
+- **PR vulnerability scans preserve package identity and comment origins.** Internal ecosystem kinds remain intact, findings use the matching manifest location, and repeated occurrences of the same package and version produce one OSV query and finding per scan.
+- **LLM requests follow provider-specific reasoning and token settings.** Chat and Responses requests use the appropriate reasoning controls and output-token fields, including compatible-provider fallbacks.
+- **Agentic tool turns retain reasoning context.** Chat and Responses conversations preserve reasoning data and tool-call identifiers across turns.
+- **Bedrock thinking and tools use compatible request shapes.** Thinking settings, forced tool choice, and tool specifications now follow model requirements.
+- **Codex CLI receives the configured reasoning effort.** Review invocations now pass the selected reasoning setting to the CLI.
+
 ## [0.10.0] — 2026-10-26
 
 ### Security
@@ -354,6 +371,7 @@ Initial public release.
 - `handle_push_index` now updates `updated_at` after incremental re-indexing
   so the "Indexed X ago" timestamp tracks reality.
 
+[0.10.1]: https://github.com/miracodeai/mira/releases/tag/v0.10.1
 [0.10.0]: https://github.com/miracodeai/mira/releases/tag/v0.10.0
 [0.9.1]: https://github.com/miracodeai/mira/releases/tag/v0.9.1
 [0.6.0]: https://github.com/miracodeai/mira/releases/tag/v0.6.0
