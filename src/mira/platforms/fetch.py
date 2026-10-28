@@ -164,13 +164,13 @@ class GitHubRepoFetcher:
     async def file_content(
         self, owner: str, repo: str, path: str, ref: str, semaphore=None
     ) -> str | None:
-        url = f"{self._api}/repos/{owner}/{repo}/contents/{path}?ref={ref}"
+        url = f"{self._api}/repos/{owner}/{repo}/contents/{quote(path, safe='/')}"
         headers = self._headers("application/vnd.github.raw+json")
 
         async def _fetch() -> str | None:
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, headers=headers, timeout=30)
+                    resp = await client.get(url, params={"ref": ref}, headers=headers, timeout=30)
                     if resp.status_code == 404:
                         return None
                     resp.raise_for_status()
@@ -299,12 +299,14 @@ class GitLabRepoFetcher:
     async def file_content(
         self, owner: str, repo: str, path: str, ref: str, semaphore=None
     ) -> str | None:
-        url = f"{self._project(owner, repo)}/repository/files/{quote(path, safe='')}/raw?ref={ref}"
+        url = f"{self._project(owner, repo)}/repository/files/{quote(path, safe='')}/raw"
 
         async def _fetch() -> str | None:
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, headers=self._headers(), timeout=30)
+                    resp = await client.get(
+                        url, params={"ref": ref}, headers=self._headers(), timeout=30
+                    )
                     if resp.status_code == 404:
                         return None
                     resp.raise_for_status()
@@ -412,12 +414,14 @@ class ForgejoRepoFetcher:
     ) -> str | None:
         import base64
 
-        url = f"{self._repo(owner, repo)}/contents/{quote(path, safe='')}?ref={ref}"
+        url = f"{self._repo(owner, repo)}/contents/{quote(path, safe='')}"
 
         async def _fetch() -> str | None:
             try:
                 async with httpx.AsyncClient() as client:
-                    resp = await client.get(url, headers=self._headers(), timeout=30)
+                    resp = await client.get(
+                        url, params={"ref": ref}, headers=self._headers(), timeout=30
+                    )
                     if resp.status_code == 404:
                         return None
                     resp.raise_for_status()
