@@ -1153,6 +1153,8 @@ class ReviewEngine:
                     ]
                     wt_raw = await self.llm.walkthrough(wt_messages)
                     wt_parsed = parse_walkthrough_response(wt_raw)
+                if not self.config.review.walkthrough_sequence_diagram:
+                    wt_parsed.sequence_diagram = None
                 return convert_to_walkthrough_result(wt_parsed)
             except Exception as exc:
                 logger.warning("Walkthrough generation failed, skipping: %s", exc)
