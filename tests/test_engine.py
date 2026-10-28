@@ -977,6 +977,55 @@ class TestCheckRunLifecycle:
         assert mock_provider.finish_check_run.await_args.args[2] == "success"
 
     @pytest.mark.asyncio
+    async def test_review_pr_empty_diff_skip_not_neutral(
+        self, mock_llm: LLMProvider, mock_provider: AsyncMock
+    ):
+        """A walkthrough-enabled review skipped on an empty diff is a plain
+        success — no generation was ever attempted."""
+        pr_info = await mock_provider.get_pr_info("https://github.com/test/repo/pull/1")
+        mock_provider.get_pr_info.return_value = replace(pr_info, head_sha="deadbeef")
+        mock_provider.get_all_bot_threads = AsyncMock(return_value=[])
+        mock_provider.get_pr_diff.return_value = ""
+        mock_provider.start_check_run = AsyncMock(return_value=42)
+
+        engine = self._engine(mock_llm, mock_provider)
+        result = await engine.review_pr("https://github.com/test/repo/pull/1")
+
+        assert result is not None
+        assert result.skipped_reason is not None
+        assert result.walkthrough is None
+        mock_provider.finish_check_run.assert_awaited_once()
+        assert mock_provider.finish_check_run.await_args.args[2] == "success"
+
+    @pytest.mark.asyncio
+    async def test_review_pr_all_files_filtered_skip_not_neutral(
+        self, mock_llm: LLMProvider, mock_provider: AsyncMock
+    ):
+        """A walkthrough-enabled review where every file is excluded by the
+        filters is a plain success — no generation was ever attempted."""
+        pr_info = await mock_provider.get_pr_info("https://github.com/test/repo/pull/1")
+        mock_provider.get_pr_info.return_value = replace(pr_info, head_sha="deadbeef")
+        mock_provider.get_all_bot_threads = AsyncMock(return_value=[])
+        mock_provider.get_pr_diff.return_value = (
+            "diff --git a/poetry.lock b/poetry.lock\n"
+            "--- a/poetry.lock\n"
+            "+++ b/poetry.lock\n"
+            "@@ -1,1 +1,2 @@\n"
+            " line\n"
+            "+new\n"
+        )
+        mock_provider.start_check_run = AsyncMock(return_value=42)
+
+        engine = self._engine(mock_llm, mock_provider)
+        result = await engine.review_pr("https://github.com/test/repo/pull/1")
+
+        assert result is not None
+        assert result.skipped_reason is not None
+        assert result.walkthrough is None
+        mock_provider.finish_check_run.assert_awaited_once()
+        assert mock_provider.finish_check_run.await_args.args[2] == "success"
+
+    @pytest.mark.asyncio
     async def test_check_run_provider_errors_never_fail_the_review(
         self, mock_llm: LLMProvider, mock_provider: AsyncMock
     ):

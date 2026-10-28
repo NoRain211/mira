@@ -624,9 +624,16 @@ class ReviewEngine:
         except BaseException:
             await self._finish_check(pr_info, run_id, "failure", None)
             raise
-        # Neutral only when a walkthrough was expected (enabled) but not
-        # generated; a disabled/skipped walkthrough is not a warning.
-        walkthrough_missing = self.config.review.walkthrough and result.walkthrough is None
+        # Neutral only when a walkthrough was enabled AND generation was
+        # genuinely attempted but produced nothing (e.g. the LLM call failed).
+        # A disabled walkthrough, or a review skipped before any generation
+        # (no files, all files filtered, docs-only, no-new-commit re-reviews),
+        # finishes as success.
+        walkthrough_missing = (
+            self.config.review.walkthrough
+            and result.skipped_reason is None
+            and result.walkthrough is None
+        )
         status_key = "neutral" if walkthrough_missing else "success"
         await self._finish_check(pr_info, run_id, status_key, result)
         return result
@@ -1164,7 +1171,10 @@ class ReviewEngine:
         # walkthrough can surface skipped files to the user.
         patch = parse_diff(diff_text)
         if not patch.files:
-            return ReviewResult(summary="No files to review.")
+            return ReviewResult(
+                summary="No files to review.",
+                skipped_reason="No files to review",
+            )
 
         filtered = filter_files(patch.files, self.config.filter)
         if not filtered:
