@@ -236,6 +236,123 @@ async def test_file_content_success_releases_semaphore(fetcher):
     assert not semaphore.locked()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize(
+    ("ref", "encoded_ref"),
+    [
+        ("main", b"main"),
+        ("feature/topic", b"feature%2Ftopic"),
+        ("feature+draft", b"feature%2Bdraft"),
+        ("feature&recursive=false", b"feature%26recursive%3Dfalse"),
+        ("feature#frag", b"feature%23frag"),
+        ("feature%2Ftopic", b"feature%252Ftopic"),
+        ("feature/日本語", b"feature%2F%E6%97%A5%E6%9C%AC%E8%AA%9E"),
+    ],
+)
+async def test_repo_tree_preserves_ref(monkeypatch, fetcher, ref, encoded_ref):
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        entries = [{"type": "blob", "path": "src/main.py"}]
+        if fetcher is GitLabRepoFetcher:
+            return httpx.Response(200, json=entries)
+        return httpx.Response(200, json={"tree": entries, "truncated": False, "total_count": 1})
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+    )
+    paths = await fetcher("synthetic", "https://forge.example.invalid/api").repo_tree(
+        "example", "app", ref
+    )
+
+    assert paths == ["src/main.py"]
+    assert len(requests) == 1
+    url = requests[0].url
+    assert url.fragment == ""
+    if fetcher is GitLabRepoFetcher:
+        assert url.raw_path.split(b"?", 1)[0] == b"/api/projects/example%2Fapp/repository/tree"
+        assert url.params.multi_items() == [
+            ("recursive", "true"),
+            ("per_page", "100"),
+            ("pagination", "keyset"),
+            ("ref", ref),
+        ]
+    else:
+        assert url.raw_path.split(b"?", 1)[0] == (
+            b"/api/repos/example/app/git/trees/" + encoded_ref
+        )
+        expected = (
+            [("recursive", "1")]
+            if fetcher is GitHubRepoFetcher
+            else [("recursive", "true"), ("per_page", "100")]
+        )
+        assert url.params.multi_items() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize(
+    "ref", ["feature+draft", "feature&mode=bad", "feature#frag", "feature%2Ftopic"]
+)
+async def test_repo_tree_preserves_ref_across_pages(monkeypatch, fetcher, ref):
+    from urllib.parse import quote
+
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        entries = [{"type": "blob", "path": f"file{len(requests)}.py"}]
+        if len(requests) > 2:
+            pytest.fail("Requested an unexpected tree page")
+        if fetcher is GitLabRepoFetcher:
+            headers = {}
+            if len(requests) == 1:
+                next_url = request.url.copy_set_param("page_token", "cursor+&next")
+                headers["link"] = f'<{next_url}>; rel="next"'
+            return httpx.Response(200, json=entries, headers=headers)
+        return httpx.Response(
+            200, json={"tree": entries, "truncated": len(requests) == 1, "total_count": 2}
+        )
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+    )
+    paths = await fetcher("synthetic", "https://forge.example.invalid/api").repo_tree(
+        "example", "app", ref
+    )
+
+    assert paths == ["file1.py", "file2.py"]
+    assert len(requests) == 2
+    for page, request in enumerate(requests, 1):
+        assert request.url.fragment == ""
+        if fetcher is GitLabRepoFetcher:
+            expected = [
+                ("recursive", "true"),
+                ("per_page", "100"),
+                ("pagination", "keyset"),
+                ("ref", ref),
+            ]
+            if page == 2:
+                expected.append(("page_token", "cursor+&next"))
+            assert request.url.params.multi_items() == expected
+        else:
+            assert request.url.raw_path.split(b"?", 1)[0] == (
+                b"/api/repos/example/app/git/trees/" + quote(ref, safe="").encode()
+            )
+            expected = [("recursive", "true"), ("per_page", "100")]
+            if page == 2:
+                expected.append(("page", "2"))
+            assert request.url.params.multi_items() == expected
+
+
 class TestGitLabTreePagination:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
