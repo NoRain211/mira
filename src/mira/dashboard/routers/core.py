@@ -269,35 +269,22 @@ def get_org_stats(period: str = "") -> OrgStatsModel:
 @router.get("/api/stats/timeseries", response_model=list[TimeSeriesPoint])
 def get_timeseries(period: str = "day") -> list[TimeSeriesPoint]:
     """Aggregate review metrics over time. Period: day, week, month."""
-    all_events: list[dict] = []
-
-    for repo_record in _api._app_db.list_repos():
-        try:
-            store = IndexStore.open(
-                repo_record.owner, repo_record.repo, platform=repo_record.platform
-            )
-            for e in store.list_review_events(limit=500):
-                all_events.append(
-                    {
-                        "created_at": e.created_at,
-                        "comments": e.comments_posted,
-                        "blockers": e.blockers,
-                        "warnings": e.warnings,
-                        "suggestions": e.suggestions,
-                        "lines": e.lines_changed,
-                        "tokens": e.tokens_used,
-                        "categories": e.categories,
-                    }
-                )
-            store.close()
-        except Exception:
-            pass
-
-    if not all_events:
-        return []
-
-    # Bucket by period
     from collections import defaultdict
+    from contextlib import closing
+
+    def iter_events():
+        for repo_record in _api._app_db.list_repos():
+            try:
+                store = IndexStore.open(
+                    repo_record.owner, repo_record.repo, platform=repo_record.platform
+                )
+                try:
+                    with store.iter_review_events() as events:
+                        yield from events
+                finally:
+                    store.close()
+            except Exception:
+                pass
 
     buckets: dict[str, dict] = defaultdict(
         lambda: {
@@ -312,27 +299,28 @@ def get_timeseries(period: str = "day") -> list[TimeSeriesPoint]:
         }
     )
 
-    for ev in all_events:
-        dt = datetime.fromtimestamp(ev["created_at"], tz=UTC)
-        if period == "month":
-            key = dt.strftime("%Y-%m")
-        elif period == "week":
-            iso_year, iso_week, _ = dt.isocalendar()
-            key = f"{iso_year}-W{iso_week:02d}"
-        else:
-            key = dt.strftime("%Y-%m-%d")
+    with closing(iter_events()) as events:
+        for ev in events:
+            dt = datetime.fromtimestamp(ev.created_at, tz=UTC)
+            if period == "month":
+                key = dt.strftime("%Y-%m")
+            elif period == "week":
+                iso_year, iso_week, _ = dt.isocalendar()
+                key = f"{iso_year}-W{iso_week:02d}"
+            else:
+                key = dt.strftime("%Y-%m-%d")
 
-        b = buckets[key]
-        b["reviews"] += 1
-        b["comments"] += ev["comments"]
-        b["blockers"] += ev["blockers"]
-        b["warnings"] += ev["warnings"]
-        b["suggestions"] += ev["suggestions"]
-        b["lines_changed"] += ev["lines"]
-        b["tokens_used"] += ev["tokens"]
-        for c in (ev["categories"] or "").split(","):
-            c = c.strip()
-            if c:
-                b["categories"][c] = b["categories"].get(c, 0) + 1
+            b = buckets[key]
+            b["reviews"] += 1
+            b["comments"] += ev.comments_posted
+            b["blockers"] += ev.blockers
+            b["warnings"] += ev.warnings
+            b["suggestions"] += ev.suggestions
+            b["lines_changed"] += ev.lines_changed
+            b["tokens_used"] += ev.tokens_used
+            for c in (ev.categories or "").split(","):
+                c = c.strip()
+                if c:
+                    b["categories"][c] = b["categories"].get(c, 0) + 1
 
     return [TimeSeriesPoint(date=k, **v) for k, v in sorted(buckets.items())]

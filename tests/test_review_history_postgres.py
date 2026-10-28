@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import os
 from contextlib import nullcontext
 from dataclasses import asdict
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -163,3 +166,55 @@ def test_postgres_query_failure_closes_dedicated_resources(postgres_history, mon
     assert len(connections) == 1
     assert connections[0].closed
     assert pg_store._get_conn(postgres_history).execute("SELECT 1").fetchone() == (1,)
+
+
+@pytest.mark.parametrize("period", ["day", "week", "month"])
+def test_postgres_timeseries_matches_python_sqlite_oracle(
+    postgres_history, tmp_path, monkeypatch, period
+):
+    from mira.dashboard.routers import core
+
+    pg = PgIndexStore("example", "app", postgres_history)
+    assert type(pg) is PgIndexStore
+    assert pg_store._get_conn(postgres_history).info.server_version > 0
+    sqlite = IndexStore(str(tmp_path / "oracle.db"))
+    midnight = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    dates = [
+        datetime(2024, 12, 30, tzinfo=UTC).timestamp(),
+        math.nextafter(midnight, -math.inf),
+        datetime(2025, 1, 8, tzinfo=UTC).timestamp(),
+    ]
+    try:
+        for store in (pg, sqlite):
+            _record_history(store)
+            for number, timestamp in enumerate(dates, 1000):
+                store.record_review(
+                    number,
+                    "Boundary review",
+                    "",
+                    11,
+                    2,
+                    3,
+                    suggestions=4,
+                    lines_changed=5,
+                    tokens_used=6,
+                    categories=" security,security,,\tbug\u00a0 ",
+                    created_at=timestamp,
+                )
+        monkeypatch.setattr(
+            core._api,
+            "_app_db",
+            SimpleNamespace(
+                list_repos=lambda: [SimpleNamespace(owner="example", repo="app", platform="github")]
+            ),
+        )
+        monkeypatch.setattr(core, "IndexStore", SimpleNamespace(open=lambda *a, **k: pg))
+        actual = [point.model_dump() for point in core.get_timeseries(period)]
+        # Keep the SQLite handle open so both real stores can serve the same route.
+        monkeypatch.setattr(sqlite, "close", lambda: None)
+        monkeypatch.setattr(core, "IndexStore", SimpleNamespace(open=lambda *a, **k: sqlite))
+        expected = [point.model_dump() for point in core.get_timeseries(period)]
+        assert actual == expected
+        assert sum(point["reviews"] for point in actual) == 516
+    finally:
+        sqlite._conn.close()
