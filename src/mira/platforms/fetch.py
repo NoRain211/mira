@@ -192,7 +192,7 @@ class GitHubRepoFetcher:
         max_file_size: int = 1_048_576,
         indexable_paths: set[str] | None = None,
     ) -> dict[str, str] | None:
-        url = f"{self._api}/repos/{owner}/{repo}/tarball/{ref}"
+        url = f"{self._api}/repos/{owner}/{repo}/tarball/{quote(ref, safe='')}"
         headers = {**self._headers(), "User-Agent": "mira-indexer"}
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
@@ -328,10 +328,10 @@ class GitLabRepoFetcher:
         max_file_size: int = 1_048_576,
         indexable_paths: set[str] | None = None,
     ) -> dict[str, str] | None:
-        url = f"{self._project(owner, repo)}/repository/archive.tar.gz?sha={ref}"
+        url = f"{self._project(owner, repo)}/repository/archive.tar.gz"
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
-                resp = await client.get(url, headers=self._headers())
+                resp = await client.get(url, params={"sha": ref}, headers=self._headers())
                 if resp.status_code != 200:
                     logger.warning(
                         "Tarball fetch failed for %s/%s: %d", owner, repo, resp.status_code
@@ -445,7 +445,7 @@ class ForgejoRepoFetcher:
         max_file_size: int = 1_048_576,
         indexable_paths: set[str] | None = None,
     ) -> dict[str, str] | None:
-        url = f"{self._repo(owner, repo)}/archive/{ref}.tar.gz"
+        url = f"{self._repo(owner, repo)}/archive/{quote(ref, safe='')}.tar.gz"
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
                 resp = await client.get(url, headers=self._headers())

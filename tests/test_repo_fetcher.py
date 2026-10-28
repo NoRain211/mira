@@ -55,6 +55,114 @@ async def test_tarball_filters_excluded_paths(monkeypatch, fetcher_type, indexab
     assert result == expected
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize(
+    ("ref", "encoded_ref"),
+    [
+        ("main", b"main"),
+        ("feature/topic", b"feature%2Ftopic"),
+        ("feature+draft", b"feature%2Bdraft"),
+        ("feature&mode=bad", b"feature%26mode%3Dbad"),
+        ("feature#frag", b"feature%23frag"),
+        ("feature%2Ftopic", b"feature%252Ftopic"),
+        ("feature/日本語", b"feature%2F%E6%97%A5%E6%9C%AC%E8%AA%9E"),
+    ],
+)
+async def test_repo_tarball_preserves_ref(monkeypatch, fetcher, ref, encoded_ref):
+    requests = []
+    blob = _make_targz("synthetic-root", {"src/main.py": "synthetic content"})
+
+    def serve(request):
+        requests.append(request)
+        return httpx.Response(200, content=blob)
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+    )
+    result = await fetcher("synthetic", "https://forge.example.invalid/api").repo_tarball(
+        "example", "app", ref
+    )
+
+    assert result == {"src/main.py": "synthetic content"}
+    assert len(requests) == 1
+    url = requests[0].url
+    assert url.fragment == ""
+    if fetcher is GitLabRepoFetcher:
+        assert url.raw_path.split(b"?", 1)[0] == (
+            b"/api/projects/example%2Fapp/repository/archive.tar.gz"
+        )
+        assert url.params.multi_items() == [("sha", ref)]
+    else:
+        expected_path = b"/api/repos/example/app/"
+        expected_path += (
+            b"tarball/" + encoded_ref
+            if fetcher is GitHubRepoFetcher
+            else b"archive/" + encoded_ref + b".tar.gz"
+        )
+        assert url.raw_path == expected_path
+        assert url.params.multi_items() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+async def test_repo_tarball_retains_redirect_and_path_filter(monkeypatch, fetcher):
+    requests = []
+    blob = _make_targz("synthetic-root", {"src/main.py": "kept", "vendor/skip.py": "skipped"})
+
+    def serve(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(302, headers={"location": "/downloads/archive.tar.gz"})
+        assert len(requests) == 2
+        assert request.url.path == "/downloads/archive.tar.gz"
+        return httpx.Response(200, content=blob)
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+    )
+    result = await fetcher("synthetic", "https://forge.example.invalid/api").repo_tarball(
+        "example", "app", "feature#frag", indexable_paths={"src/main.py"}
+    )
+
+    assert result == {"src/main.py": "kept"}
+    assert len(requests) == 2
+    auth_header = "private-token" if fetcher is GitLabRepoFetcher else "authorization"
+    assert "synthetic" in requests[0].headers[auth_header]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetcher", [GitHubRepoFetcher, GitLabRepoFetcher, ForgejoRepoFetcher])
+@pytest.mark.parametrize("outcome", [404, 503, "timeout"])
+async def test_repo_tarball_failure_still_returns_none(monkeypatch, fetcher, outcome):
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("synthetic timeout", request=request)
+        return httpx.Response(outcome)
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        fetch.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+    )
+    result = await fetcher("synthetic", "https://forge.example.invalid/api").repo_tarball(
+        "example", "app", "feature#frag"
+    )
+
+    assert result is None
+    assert len(requests) == 1
+
+
 class TestStripTarball:
     def test_strips_top_level_dir(self):
         blob = _make_targz("acme-web-abc123", {"src/main.py": "x = 1", "README.md": "# hi"})
