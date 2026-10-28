@@ -915,6 +915,25 @@ class PgIndexStore(_StoreSharedMixin):
             for r in rows
         ]
 
+    @contextmanager
+    def iter_review_events(self) -> Iterator[Iterator[ReviewEvent]]:
+        """Stream history on a dedicated read-only transaction and server cursor."""
+        from mira.db.postgres import connect
+
+        with connect(self._url) as conn, conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            with conn.cursor(name="mira_review_history") as cursor:
+                cursor.itersize = 128
+                cursor.execute(
+                    "SELECT id, pr_number, pr_title, pr_url, author, comments_posted, blockers, warnings, "
+                    "suggestions, files_reviewed, lines_changed, tokens_used, duration_ms, "
+                    "categories, created_at, author_avatar_url, reviewed_paths "
+                    "FROM review_events WHERE owner=%s AND repo=%s "
+                    "ORDER BY created_at DESC, id ASC",
+                    (self._owner, self._repo),
+                )
+                yield (ReviewEvent(*row) for row in cursor)
+
     def list_review_events(self, limit: int = 100) -> list[ReviewEvent]:
         rows = self._fetchall(
             "SELECT id, pr_number, pr_title, pr_url, comments_posted, blockers, warnings, "

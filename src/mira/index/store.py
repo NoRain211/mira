@@ -7,6 +7,8 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -727,6 +729,21 @@ class IndexStore(_StoreSharedMixin):
             author_avatar_url=author_avatar_url,
             reviewed_paths=reviewed_paths,
         )
+
+    @contextmanager
+    def iter_review_events(self) -> Iterator[Iterator[ReviewEvent]]:
+        """Stream the complete history, closing the cursor even on an early exit."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, pr_number, pr_title, pr_url, author, comments_posted, blockers, warnings, "
+                "suggestions, files_reviewed, lines_changed, tokens_used, duration_ms, "
+                "categories, created_at, author_avatar_url, reviewed_paths "
+                "FROM review_events ORDER BY created_at DESC, id ASC"
+            )
+            yield (ReviewEvent(*row) for row in cursor)
+        finally:
+            cursor.close()
 
     def list_review_events(self, limit: int = 100) -> list[ReviewEvent]:
         rows = self._conn.execute(
