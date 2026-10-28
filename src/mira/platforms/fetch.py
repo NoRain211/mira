@@ -148,7 +148,7 @@ class GitHubRepoFetcher:
             return "main"
 
     async def repo_tree(self, owner: str, repo: str, branch: str) -> list[str]:
-        url = f"{self._api}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+        url = f"{self._api}/repos/{owner}/{repo}/git/trees/{quote(branch, safe='')}?recursive=1"
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=self._headers(), timeout=30)
             # GitHub returns 409 (and sometimes 404) for an empty repo.
@@ -245,9 +245,16 @@ class GitLabRepoFetcher:
 
     async def repo_tree(self, owner: str, repo: str, branch: str) -> list[str]:
         # Keyset pagination via the Link header; recursive lists the whole tree.
-        initial_url = (
-            f"{self._project(owner, repo)}/repository/tree"
-            f"?recursive=true&per_page=100&pagination=keyset&ref={branch}"
+        initial_url = str(
+            httpx.URL(
+                f"{self._project(owner, repo)}/repository/tree",
+                params={
+                    "recursive": "true",
+                    "per_page": "100",
+                    "pagination": "keyset",
+                    "ref": branch,
+                },
+            )
         )
         url: str | None = initial_url
         paths: list[str] = []
@@ -374,7 +381,7 @@ class ForgejoRepoFetcher:
             return "main"
 
     async def repo_tree(self, owner: str, repo: str, branch: str) -> list[str]:
-        url = f"{self._repo(owner, repo)}/git/trees/{branch}?recursive=true&per_page=100"
+        url = f"{self._repo(owner, repo)}/git/trees/{quote(branch, safe='')}?recursive=true&per_page=100"
         paths: list[str] = []
         seen: set[str] = set()
         total: int | None = None
