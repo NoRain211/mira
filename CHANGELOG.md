@@ -15,6 +15,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **SQLite vulnerability summaries report persisted alerts.** Organization-wide severity counts now include alerts from repository databases, matching the vulnerability listing.
 - **Invalid walkthroughs are retried once.** Empty summaries and leaked tool-call XML are rejected; if the retry also fails, the PR placeholder reports that the walkthrough could not be generated.
 - **Repository file requests preserve refs and paths.** GitHub, GitLab, and Forgejo correctly encode refs containing query delimiters or literal percent sequences, and GitHub content paths preserve filename delimiters.
+- **Repository tree requests preserve branch names.** GitHub, GitLab, and Forgejo correctly encode refs containing slashes, query delimiters, or literal percent sequences so indexing reads the intended tree.
+- **Repository archive requests preserve refs.** Tarball downloads on GitHub, GitLab, and Forgejo correctly encode branch and tag refs instead of treating special characters as URL paths, queries, or fragments.
 - **GitLab and Forgejo archive fetches honor path filters.** Excluded files are discarded during tarball extraction instead of being decoded and retained in memory.
 - **Incomplete repository trees are rejected.** Truncated GitHub trees and incomplete GitLab or Forgejo pagination no longer silently produce partial indexes.
 - **PR vulnerability scans preserve package identity and comment origins.** Internal ecosystem kinds remain intact, findings use the matching manifest location, and repeated occurrences of the same package and version produce one OSV query and finding per scan.
