@@ -9,6 +9,7 @@ other OpenAI-compatible endpoint works off the portable default, no entry needed
 from __future__ import annotations
 
 import logging
+import time
 from typing import ClassVar
 
 import httpx
@@ -56,7 +57,9 @@ class LLMProvider(OpenAICompatibleProvider):
             "model": _strip_model_prefix(model, self.config.base_url),
             "messages": messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
+            self._max_tokens_field(): (
+                max_tokens if max_tokens is not None else self.config.max_tokens
+            ),
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
@@ -103,16 +106,33 @@ class LLMProvider(OpenAICompatibleProvider):
             # forced choice fall back to "auto" (handled on the 400 below).
             "tool_choice": "auto" if api_model in self._no_forced_tool_choice else forced_choice,
             "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            self._max_tokens_field(): self.config.max_tokens,
         }
         self._apply_reasoning(body)
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-            resp = await client.post(
-                self._chat_url(),
-                headers=self._build_headers(),
-                json=body,
-            )
+            started = time.monotonic()
+            try:
+                resp = await client.post(
+                    self._chat_url(),
+                    headers=self._build_headers(),
+                    json=body,
+                )
+            except Exception as exc:
+                # Transport-level failures (drops, resets) carry no HTTP status
+                # or body, so record the context that is otherwise discarded.
+                logger.warning(
+                    "LLM transport error for %s at %s after %.0fms "
+                    "(timeout=%ss, reasoning=%s): %s: %s",
+                    api_model,
+                    self._chat_url(),
+                    (time.monotonic() - started) * 1000,
+                    self.config.request_timeout,
+                    self._has_reasoning(body),
+                    type(exc).__name__,
+                    exc,
+                )
+                raise
             if (
                 resp.status_code == 400
                 and body["tool_choice"] != "auto"
@@ -123,12 +143,20 @@ class LLMProvider(OpenAICompatibleProvider):
                 self._no_forced_tool_choice.add(api_model)
                 body["tool_choice"] = "auto"
                 resp = await client.post(self._chat_url(), headers=self._build_headers(), json=body)
-            if resp.status_code == 400 and "reasoning" in body and "reasoning" in resp.text.lower():
+            if (
+                resp.status_code == 400
+                and self._has_reasoning(body)
+                and "reasoning" in resp.text.lower()
+            ):
                 # Reasoning effort unsupported on this model/endpoint — drop it
                 # and review without thinking instead of failing the review.
+                # Re-apply the provider's explicit off payload where one exists
+                # (DeepSeek), so removing the field doesn't leave default-on
+                # thinking in place.
                 logger.info("Model %s rejected reasoning effort; retrying without it", api_model)
                 self._no_reasoning.add(api_model)
-                body.pop("reasoning", None)
+                self._remove_reasoning(body)
+                self._apply_reasoning_off(body)
                 body["temperature"] = (
                     temperature if temperature is not None else self.config.temperature
                 )
@@ -138,7 +166,8 @@ class LLMProvider(OpenAICompatibleProvider):
 
         self._account_usage(data)
 
-        message = data["choices"][0]["message"]
+        choice = data["choices"][0]
+        message = choice["message"]
         tool_calls = message.get("tool_calls")
 
         if tool_calls and len(tool_calls) > 0:
@@ -151,7 +180,21 @@ class LLMProvider(OpenAICompatibleProvider):
             logger.warning("Model returned content instead of tool call, using content as fallback")
             return content
 
-        raise LLMError("no_tool_call")
+        # Neither a tool call nor content. Carry the response shape on the
+        # error's full message — counts only, never reasoning text.
+        usage = data.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        detail = (
+            f"status={resp.status_code} "
+            f"finish_reason={choice.get('finish_reason')} "
+            f"content_len={len(content)} "
+            f"reasoning_len={len(message.get('reasoning_content') or '')} "
+            f"tool_calls={len(tool_calls or [])} "
+            f"prompt_tokens={usage.get('prompt_tokens')} "
+            f"completion_tokens={usage.get('completion_tokens')} "
+            f"reasoning_tokens={details.get('reasoning_tokens')}"
+        )
+        raise LLMError("no_tool_call", detail=detail)
 
     async def _call_llm_agentic(
         self,
@@ -173,7 +216,7 @@ class LLMProvider(OpenAICompatibleProvider):
             "tools": tools,
             "tool_choice": "auto",
             "temperature": temperature if temperature is not None else self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            self._max_tokens_field(): self.config.max_tokens,
         }
         self._apply_reasoning(body)
 
