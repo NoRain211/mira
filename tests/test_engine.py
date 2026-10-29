@@ -396,6 +396,49 @@ class TestReviewEngine:
         assert result.walkthrough.summary != ""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize("retry", [False, True])
+    @pytest.mark.parametrize("mode", ["diff", "pr"])
+    async def test_walkthrough_diagram_setting_is_enforced(
+        self, mock_llm, mock_provider, sample_diff_text, enabled, retry, mode
+    ):
+        response = json.loads(_WALKTHROUGH_LLM_RESPONSE)
+        response["sequence_diagram"] = 'graph LR\n  a["Input"] --> b["Output"]'
+        raw = json.dumps(response)
+        mock_llm.walkthrough.side_effect = ["{}", raw] if retry else [raw]
+        mock_provider.get_all_bot_threads.return_value = []
+        mock_provider.find_bot_comment.return_value = 42
+        config = MiraConfig()
+        config.review.walkthrough_sequence_diagram = enabled
+        config.review.security_pass = False
+        config.review.self_critique = False
+        config.review.include_summary = False
+        config.review.code_context = False
+        config.review.overlap.enabled = False
+        engine = ReviewEngine(config=config, llm=mock_llm, provider=mock_provider)
+
+        result = (
+            await engine.review_diff(sample_diff_text)
+            if mode == "diff"
+            else await engine.review_pr("https://github.com/test/repo/pull/1")
+        )
+
+        assert result.walkthrough is not None
+        assert result.walkthrough.summary == response["summary"]
+        assert result.walkthrough.sequence_diagram == (
+            response["sequence_diagram"] if enabled else None
+        )
+        assert ("```mermaid" in result.walkthrough.to_markdown()) is enabled
+        assert mock_llm.walkthrough.await_count == (2 if retry else 1)
+        if mode == "pr":
+            bodies = [call.args[2] for call in mock_provider.update_comment.call_args_list]
+            progress = [body for body in bodies if "Code review in progress" in body]
+            assert progress
+            assert all(("```mermaid" in body) is enabled for body in progress)
+            assert "Code review in progress" not in bodies[-1]
+            assert ("```mermaid" in bodies[-1]) is enabled
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("bad_response", ["{}", '{"summary":"Changes.</invoke>"}'])
     async def test_walkthrough_retries_invalid_content(
         self, mock_llm: LLMProvider, sample_diff_text: str, bad_response: str
