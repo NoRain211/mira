@@ -1676,7 +1676,7 @@ def list_packages_org_wide_sqlite() -> list[dict]:
     out: list[dict] = []
     for platform, owner, repo, db_path in _iter_repo_dbs(index_dir):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)
             try:
                 rows = conn.execute(
                     "SELECT DISTINCT kind, name, version, file_path FROM package_manifests "
@@ -1716,7 +1716,7 @@ def search_packages_org_wide_sqlite(
     rows: list[dict] = []
     for platform, owner, repo, db_path in _iter_repo_dbs(index_dir):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)
             try:
                 cur = conn.execute(
                     "SELECT name, kind, version, file_path, is_dev FROM package_manifests"
@@ -1779,7 +1779,7 @@ def list_vulnerabilities_org_wide_sqlite(limit: int = 1000) -> list[dict]:
     rows: list[dict] = []
     for platform, owner, repo, db_path in _iter_repo_dbs(index_dir):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)
             try:
                 cur = conn.execute(
                     "SELECT package_name, ecosystem, package_version, cve_id, summary, "
@@ -1821,7 +1821,7 @@ def list_learned_rules_org_wide_sqlite(limit: int = 500, status: str | None = No
     rows: list[dict] = []
     for platform, owner, repo, db_path in _iter_repo_dbs(index_dir):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(Path(db_path).absolute().as_uri() + "?mode=ro", uri=True)
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(learned_rules)").fetchall()}
                 has_status = "status" in cols
