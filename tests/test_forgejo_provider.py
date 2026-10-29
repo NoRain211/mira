@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from mira.exceptions import ConfigError, ProviderError
@@ -321,3 +322,136 @@ class TestForgejoURLs:
         assert ForgejoProvider("dummy-token")._base == (
             explicit_base or "https://git.acme.test/forgejo"
         )
+
+
+class TestRemoveLabel:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [200, 204])
+    @pytest.mark.parametrize(
+        ("label", "encoded"),
+        [
+            ("mira-paused", b"mira-paused"),
+            ("needs triage", b"needs%20triage"),
+            ("team/security", b"team%2Fsecurity"),
+            ("label#tag?x=1&more", b"label%23tag%3Fx%3D1%26more"),
+            ("literal%2Ftag", b"literal%252Ftag"),
+            ("修正", b"%E4%BF%AE%E6%AD%A3"),
+        ],
+    )
+    async def test_removes_only_requested_label(self, monkeypatch, status, label, encoded):
+        from urllib.parse import unquote
+
+        labels = {label, "bug", "release-blocker"}
+        requests = []
+        collection = b"/api/v1/repos/example/app/issues/7/labels"
+
+        def serve(request):
+            requests.append(request)
+            raw_path = request.url.raw_path.split(b"?", 1)[0]
+            if raw_path == collection:
+                labels.clear()  # Forgejo's collection DELETE clears every label.
+            else:
+                assert raw_path.startswith(collection + b"/")
+                labels.discard(unquote(raw_path[len(collection) + 1 :].decode()))
+            return httpx.Response(status, json=[] if status == 200 else None)
+
+        client_type = httpx.AsyncClient
+        monkeypatch.setattr(
+            "mira.providers.forgejo.httpx.AsyncClient",
+            lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+        )
+        provider = ForgejoProvider("synthetic")
+        provider._api = "https://forge.example.invalid/api/v1"
+        info = PRInfo(
+            title="Synthetic",
+            description="",
+            base_branch="main",
+            head_branch="topic",
+            url="https://forge.example.invalid/example/app/pulls/7",
+            number=7,
+            owner="example",
+            repo="app",
+            platform="forgejo",
+        )
+
+        await provider.remove_label(info, label)
+
+        assert labels == {"bug", "release-blocker"}
+        assert len(requests) == 1
+        assert requests[0].method == "DELETE"
+        assert requests[0].url.raw_path == collection + b"/" + encoded
+        assert requests[0].url.fragment == ""
+        assert requests[0].url.params.multi_items() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [403, 404, 422, 500])
+    async def test_remove_label_errors_do_not_fall_back_to_collection(self, monkeypatch, status):
+        requests = []
+
+        def serve(request):
+            requests.append(request)
+            return httpx.Response(status)
+
+        client_type = httpx.AsyncClient
+        monkeypatch.setattr(
+            "mira.providers.forgejo.httpx.AsyncClient",
+            lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+        )
+        provider = ForgejoProvider("synthetic")
+        provider._api = "https://forge.example.invalid/api/v1"
+        info = PRInfo(
+            title="Synthetic",
+            description="",
+            base_branch="main",
+            head_branch="topic",
+            url="https://forge.example.invalid/example/app/pulls/7",
+            number=7,
+            owner="example",
+            repo="app",
+            platform="forgejo",
+        )
+
+        with pytest.raises(ProviderError) as error:
+            await provider.remove_label(info, "mira-paused")
+
+        assert error.value.status_code == status
+        assert len(requests) == 1
+        assert requests[0].url.raw_path == b"/api/v1/repos/example/app/issues/7/labels/mira-paused"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("label", ["", ".", ".."])
+    async def test_remove_label_rejects_normalizing_identifiers_without_http(
+        self, monkeypatch, label
+    ):
+        requests = []
+
+        def serve(request):
+            requests.append(str(request.url))
+            return httpx.Response(204)
+
+        client_type = httpx.AsyncClient
+        monkeypatch.setattr(
+            "mira.providers.forgejo.httpx.AsyncClient",
+            lambda **kwargs: client_type(transport=httpx.MockTransport(serve), **kwargs),
+        )
+        provider = ForgejoProvider("synthetic")
+        provider._api = "https://forge.example.invalid/api/v1"
+        info = PRInfo(
+            title="Synthetic",
+            description="",
+            base_branch="main",
+            head_branch="topic",
+            url="https://forge.example.invalid/example/app/pulls/7",
+            number=7,
+            owner="example",
+            repo="app",
+            platform="forgejo",
+        )
+        error = None
+        try:
+            await provider.remove_label(info, label)
+        except ProviderError as exc:
+            error = exc
+
+        assert requests == []
+        assert isinstance(error, ProviderError)
