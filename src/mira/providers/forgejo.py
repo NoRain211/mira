@@ -618,9 +618,13 @@ class ForgejoProvider(BaseProvider):
         )
 
     async def remove_label(self, pr_info: PRInfo, label: str) -> None:
+        # Quoting preserves dot segments, which HTTP clients normalize to a parent resource.
+        if label in ("", ".", ".."):
+            raise ProviderError("Cannot remove an empty or dot-segment label identifier")
         await self._request(
             "DELETE",
-            f"{self._repo(pr_info)}/issues/{pr_info.number}/labels?name={quote(label, safe='')}",
+            f"{self._repo(pr_info)}/issues/{pr_info.number}/labels/{quote(label, safe='')}",
+            ok=(200, 204),
         )
 
     async def get_discussion_root_body(self, pr_info: PRInfo, discussion_id: str) -> str:
