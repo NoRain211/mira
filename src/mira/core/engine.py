@@ -633,15 +633,6 @@ class ReviewEngine:
             1 for line in diff_text.splitlines() if line.startswith("+") or line.startswith("-")
         )
 
-        placeholder_id: int | None = None
-        # Automatic review-rest rounds keep the first pass's walkthrough instead of
-        # replacing it with one that describes only this batch.
-        if not self.dry_run and not getattr(self, "_keep_walkthrough", False):
-            try:
-                placeholder_id = await self._post_placeholder_comment(pr_info)
-            except Exception as exc:
-                logger.warning("Failed to post walkthrough placeholder: %s", exc)
-
         _walkthrough_result: list[WalkthroughResult | None] = [None]
 
         async def _on_walkthrough_ready(wt: WalkthroughResult | None) -> None:
@@ -657,10 +648,9 @@ class ReviewEngine:
             except Exception as exc:
                 logger.warning("Failed to post in-progress walkthrough: %s", exc)
 
-        # Round 2+ raises the comment threshold so we converge instead of
-        # dripping new findings on every push. review-rest is a continuation of
-        # round 1 onto never-reviewed files, so it stays round 1 (full
-        # thresholds, full diff) even though the first pass left threads behind.
+        # Round 2+ reviews only the commits since the last review. review-rest is a
+        # continuation of round 1 onto never-reviewed files, so it stays round 1
+        # (full diff) even though the first pass left threads behind.
         review_round = 1
         is_review_rest = getattr(self, "_review_only_paths", None) is not None
         resolved_thread_dicts: list[dict] = []
@@ -683,6 +673,17 @@ class ReviewEngine:
                 ]
         except Exception as exc:
             logger.warning("Failed to compute review round: %s", exc)
+
+        # Review-rest and round 2+ see only part of the PR, so they keep the
+        # existing walkthrough instead of replacing it with one for that part.
+        if review_round >= 2:
+            self._keep_walkthrough = True
+        placeholder_id: int | None = None
+        if not self.dry_run and not getattr(self, "_keep_walkthrough", False):
+            try:
+                placeholder_id = await self._post_placeholder_comment(pr_info)
+            except Exception as exc:
+                logger.warning("Failed to post walkthrough placeholder: %s", exc)
 
         # Round 2+ uses incremental diff to avoid re-flagging untouched files.
         # Overlap detection keeps the full diff — its fingerprint must cover the
@@ -1364,11 +1365,7 @@ class ReviewEngine:
         """Severity, noise filter, already-posted dedupe, then self-critique."""
         all_comments = [classify_severity(c) for c in all_comments]
 
-        final_comments = filter_noise(
-            all_comments,
-            self.config.filter,
-            review_round=review_round,
-        )
+        final_comments = filter_noise(all_comments, self.config.filter)
         _audit_stage(audit, "noise_filter", all_comments, final_comments)
 
         # Dedupe against still-open threads before self-critique, so we don't

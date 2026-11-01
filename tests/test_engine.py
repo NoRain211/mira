@@ -137,6 +137,7 @@ def mock_provider(sample_diff_text: str) -> AsyncMock:
     provider.find_bot_comment = AsyncMock(return_value=None)
     provider.update_comment = AsyncMock()
     provider.get_unresolved_bot_threads = AsyncMock(return_value=[])
+    provider.get_all_bot_threads = AsyncMock(return_value=[])
     return provider
 
 
@@ -1299,6 +1300,9 @@ class TestRoundDetectionWiring:
         await engine.review_pr("https://github.com/o/r/pull/1")
 
         assert captured["review_round"] == 2
+        # A round-2 pass sees only the new commits, so it must not replace the walkthrough.
+        assert engine._keep_walkthrough is True
+        mock_provider.post_comment.assert_not_called()
         assert captured["resolved_threads"] is not None
         assert len(captured["resolved_threads"]) == 1
         assert captured["resolved_threads"][0]["path"] == "a.py"
