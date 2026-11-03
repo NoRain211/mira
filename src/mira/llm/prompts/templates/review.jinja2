@@ -109,13 +109,10 @@ Only use these file paths in your comments:
 ## This is a follow-up review (round {{ review_round }})
 
 You have already reviewed this PR at least once. The author has pushed new
-commits in response. Your job now is **not** to re-litigate the original
-review — round 1 set the bar. Apply a much stricter filter:
-
-- Only post comments at **warning severity or above**.
-- Only post comments where you can cite specific lines that prove the issue.
-- Do **not** raise nitpicks, style preferences, or "while I'm here" suggestions on the new code — if it wasn't worth flagging in round 1, it isn't worth flagging now.
-- The point of this round is catching **bugs the author introduced while applying earlier fixes**, or **incomplete fixes** that miss a sibling case. Anything else, skip.
+commits, and the diff below covers only those commits. Review them with the
+same bar as round 1, without re-raising issues from earlier rounds. Pay
+particular attention to **bugs the author introduced while applying earlier
+fixes** and **incomplete fixes** that miss a sibling case.
 
 If the new commits look fine, return zero comments. That's the correct outcome on most follow-up rounds.
 {% endif %}

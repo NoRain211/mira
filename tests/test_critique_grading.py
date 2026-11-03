@@ -38,10 +38,10 @@ class TestKeepRule:
         c = _comment(severity=Severity.BLOCKER, confidence=1.0)
         assert not _critique_keep({"evidence": "unsupported"}, c)
 
-    def test_plausible_kept_only_when_severe_and_confident(self):
-        assert _critique_keep({"evidence": "plausible"}, _comment(Severity.WARNING, confidence=0.8))
+    def test_plausible_kept_only_when_severe(self):
+        # The confidence floor is filter_noise's job, applied before critique.
+        assert _critique_keep({"evidence": "plausible"}, _comment(Severity.WARNING, confidence=0.7))
         assert _critique_keep({"evidence": "plausible"}, _comment(Severity.BLOCKER, 0.95))
-        assert not _critique_keep({"evidence": "plausible"}, _comment(Severity.WARNING, 0.7))
         assert not _critique_keep({"evidence": "plausible"}, _comment(Severity.SUGGESTION, 0.95))
 
     def test_legacy_keep_boolean_honored(self):
