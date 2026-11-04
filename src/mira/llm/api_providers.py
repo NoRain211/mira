@@ -237,6 +237,14 @@ PRESETS: list[dict] = [
         "Subscription. Only chat-completions models are listed.",
     ),
     _p(
+        "orcarouter",
+        "OrcaRouter",
+        "paid",
+        "https://api.orcarouter.ai/v1",
+        "https://orcarouter.ai",
+        "Zero-markup router over 200+ provider models; pay as you go.",
+    ),
+    _p(
         "ollama", "Ollama", "local", "http://host.docker.internal:11434/v1", note=_LOCAL, key="none"
     ),
     _p(

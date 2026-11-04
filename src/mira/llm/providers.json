@@ -17,5 +17,11 @@
     "api_key_env": "DEEPSEEK_API_KEY",
     "model_prefix": "strip",
     "reasoning_off_payload": { "thinking": { "type": "disabled" } }
+  },
+
+  "orcarouter": {
+    "base_url": "https://api.orcarouter.ai/v1",
+    "api_key_env": "ORCAROUTER_API_KEY",
+    "model_prefix": "keep"
   }
 }
