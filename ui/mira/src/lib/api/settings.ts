@@ -117,6 +117,9 @@ export const settingsApi = {
       missing_api_key: string
       critique_model: string
       ensemble_models: string[]
+      max_tokens: string
+      config_max_tokens: number
+      max_tokens_options: number[]
     }>("/api/settings/models"),
 
   saveModels: (
@@ -135,6 +138,7 @@ export const settingsApi = {
       indexing_reasoning: string
       security_reasoning: string
       critique_reasoning: string
+      max_tokens: string
     }>
   ) =>
     putJson<{ ok: boolean }>("/api/settings/models", {

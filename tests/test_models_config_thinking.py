@@ -91,6 +91,13 @@ class TestLLMConfigFor:
         resolved = llm_config_for("security", LLMConfig())
         assert resolved.reasoning_effort == "medium"
 
+    def test_max_tokens_setting_applies_to_every_model(self, in_memory_db: AppDatabase):
+        base = LLMConfig(max_tokens=4096)
+        assert llm_config_for("review", base).max_tokens == 4096
+        in_memory_db.set_setting("max_tokens", "65536")
+        for purpose in ("review", "indexing", "security", "other"):
+            assert llm_config_for(purpose, base).max_tokens == 65536
+
 
 class TestSetModelsThinkingValidation:
     def test_rejects_invalid_thinking_mode(self, in_memory_db: AppDatabase):
@@ -102,6 +109,13 @@ class TestSetModelsThinkingValidation:
         with pytest.raises(HTTPException) as exc:
             set_models(body, _admin_req())
         assert exc.value.status_code == 400
+
+    def test_max_tokens_must_be_a_preset(self, in_memory_db: AppDatabase):
+        body = ModelsUpdate(indexing_model="a/b", review_model="a/c", max_tokens="5000")
+        with pytest.raises(HTTPException):
+            set_models(body, _admin_req())
+        set_models(body.model_copy(update={"max_tokens": "262144"}), _admin_req())
+        assert in_memory_db.get_setting("max_tokens") == "262144"
 
     def test_persists_valid_thinking_mode(self, in_memory_db: AppDatabase):
         body = ModelsUpdate(

@@ -194,6 +194,7 @@ async def get_models() -> ModelsResponse:
     )
     from mira.dashboard.models_config import (
         API_STYLES,
+        MAX_TOKENS_PRESETS,
         THINKING_MODES,
         ensemble_configs,
         get_indexing_model,
@@ -264,6 +265,9 @@ async def get_models() -> ModelsResponse:
             critique_model if critique_model is not None else config.llm.critique_model or ""
         ),
         ensemble_models=[c.model for c in ensemble_configs(config.llm)],
+        max_tokens=_api._app_db.get_setting("max_tokens") or "",
+        config_max_tokens=config.llm.max_tokens,
+        max_tokens_options=MAX_TOKENS_PRESETS,
         **{
             f"{tier}_fallbacks": llm_config_for(tier, config.llm).fallback_models
             for tier in ("indexing", "review", "security")
@@ -334,7 +338,11 @@ def set_global_settings(body: GlobalSettingsUpdate, request: Request) -> dict:
 @router.put("/api/settings/models")
 def set_models(body: ModelsUpdate, request: Request) -> dict:
     _require_admin(request)
-    from mira.dashboard.models_config import API_STYLE_VALUES, THINKING_MODE_VALUES
+    from mira.dashboard.models_config import (
+        API_STYLE_VALUES,
+        MAX_TOKENS_PRESETS,
+        THINKING_MODE_VALUES,
+    )
     from mira.llm import parse_model_entry
 
     for key in (
@@ -363,6 +371,10 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
             status_code=400,
             detail=f"{body.api_style!r} is not a valid API style.",
         )
+    if body.max_tokens and body.max_tokens not in {str(n) for n in MAX_TOKENS_PRESETS}:
+        raise HTTPException(
+            status_code=400, detail=f"{body.max_tokens!r} is not a valid max tokens value."
+        )
     # "" clears the override so mira.yaml is authoritative again. Any other id
     # is stored as-is — the dashboard accepts the same free-form model ids as
     # mira.yaml (the dropdown still guides toward registry models), and the
@@ -382,6 +394,8 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
     if body.ensemble_models is not None:
         ids = dict.fromkeys(m.strip() for m in body.ensemble_models if m.strip() and "," not in m)
         settings["ensemble_models"] = ",".join(ids)
+    if body.max_tokens is not None:
+        settings["max_tokens"] = body.max_tokens
     for key in (
         "review_thinking_mode",
         "indexing_reasoning",

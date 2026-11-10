@@ -170,6 +170,9 @@ export function SettingsPage() {
   const [thinkingOptions, setThinkingOptions] = useState<ModelOption[]>([])
   const [apiStyle, setApiStyle] = useState("chat")
   const [apiStyleOptions, setApiStyleOptions] = useState<ModelOption[]>([])
+  const [maxTokens, setMaxTokens] = useState("")
+  const [configMaxTokens, setConfigMaxTokens] = useState(0)
+  const [maxTokensOptions, setMaxTokensOptions] = useState<number[]>([])
   const [savingModels, setSavingModels] = useState(false)
   const [modelsSaved, setModelsSaved] = useState(false)
   // Fallback/critic/second-opinion values as loaded. They may come from mira.yaml, so
@@ -226,6 +229,9 @@ export function SettingsPage() {
       setThinkingOptions(m.thinking_options)
       setApiStyle(m.api_style ?? "chat")
       setApiStyleOptions(m.api_style_options ?? [])
+      setMaxTokens(m.max_tokens ?? "")
+      setConfigMaxTokens(m.config_max_tokens)
+      setMaxTokensOptions(m.max_tokens_options ?? [])
       const aux = {
         indexing_fallbacks: m.indexing_fallbacks ?? [],
         review_fallbacks: m.review_fallbacks ?? [],
@@ -293,7 +299,7 @@ export function SettingsPage() {
       thinkingMode,
       apiStyle,
       // Reasoning levels are stored overrides (not inherited values), so they always go.
-      { ...edited, ...reasoning }
+      { ...edited, ...reasoning, max_tokens: maxTokens }
     )
     loadedAux.current = aux
     setSavingModels(false)
@@ -697,6 +703,32 @@ export function SettingsPage() {
                 Posts fewer comments and adds one review per model. With one
                 extra model both must agree, which drops many real findings; use
                 two or more.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Max Output Tokens</label>
+              <Select
+                value={maxTokens || "default"}
+                onValueChange={(v) => setMaxTokens(v === "default" ? "" : v)}
+              >
+                <SelectTrigger aria-label="Max output tokens" className="w-64">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">
+                    Default ({configMaxTokens.toLocaleString()} from mira.yaml)
+                  </SelectItem>
+                  {maxTokensOptions.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n / 1024}k
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Output budget for every model, thinking included. A thinking
+                model that runs out stops before it answers. Claude models cap
+                at their own limit (128k).
               </p>
             </div>
             {backend !== "bedrock" && (

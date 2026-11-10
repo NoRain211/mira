@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import ClassVar
 
 import httpx
@@ -29,6 +30,8 @@ _NO_TEMPERATURE: set[str] = set()
 _NO_FORCED_TOOL: set[str] = set()
 # Models that rejected adaptive thinking (Haiku 4.5, Sonnet 4.x); they get a token budget.
 _BUDGET_THINKING: set[str] = set()
+# Output limit a model reported when it rejected a larger max_tokens.
+_MAX_OUTPUT: dict[str, int] = {}
 _THINKING_BUDGET = {"low": 2048, "medium": 8192, "high": 16384, "xhigh": 24576, "max": 32000}
 
 
@@ -176,6 +179,9 @@ class AnthropicOAuthProvider:
             "messages": wire_messages,
             **body,
         }
+        cap = _MAX_OUTPUT.get(self.config.model)
+        if cap and payload["max_tokens"] > cap:
+            payload["max_tokens"] = cap
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
             resp = await client.post(
                 f"{oauth_accounts.ANTHROPIC_API}/v1/messages",
@@ -197,6 +203,11 @@ class AnthropicOAuthProvider:
                 return await self._send(messages, extra_system=extra_system, **body)
             if resp.status_code == 400 and "adaptive thinking" in resp.text:
                 _BUDGET_THINKING.add(self.config.model)
+                return await self._send(messages, extra_system=extra_system, **body)
+            # "max_tokens: 262144 > 128000, which is the maximum allowed ..."
+            limit = re.search(r"max_tokens: \d+ > (\d+)", resp.text)
+            if resp.status_code == 400 and limit and int(limit[1]) < payload["max_tokens"]:
+                _MAX_OUTPUT[self.config.model] = int(limit[1])
                 return await self._send(messages, extra_system=extra_system, **body)
             if oauth_accounts.is_quota_error(resp):
                 oauth_accounts.mark_rate_limited(account, resp)

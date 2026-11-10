@@ -38,12 +38,21 @@ API_STYLES: list[dict[str, str]] = [
 ]
 API_STYLE_VALUES = {m["value"] for m in API_STYLES}
 
+# Output-token budgets offered on the Models page; one value applies to every model.
+MAX_TOKENS_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
+
 
 def resolve_api_style(config: LLMConfig, db_value: str | None = None) -> str:
     """Resolve the API protocol: DB → config.api_style → "chat"."""
     if db_value and db_value in API_STYLE_VALUES:
         return db_value
     return config.api_style if config.api_style in API_STYLE_VALUES else "chat"
+
+
+def resolve_max_tokens(config: LLMConfig) -> int:
+    """Output budget for every model: dashboard setting → mira.yaml."""
+    stored = _db_setting("max_tokens")
+    return int(stored) if stored else config.max_tokens
 
 
 def estimate_indexing_cost(file_count: int, model: str) -> dict:
@@ -185,7 +194,13 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
         config_model = base.review_model
         thinking_mode = get_review_thinking_mode(base, db_thinking)
     else:
-        return base.model_copy(update={"reasoning_effort": None, "api_style": resolved_style})
+        return base.model_copy(
+            update={
+                "reasoning_effort": None,
+                "api_style": resolved_style,
+                "max_tokens": resolve_max_tokens(base),
+            }
+        )
 
     if purpose != "review":
         effort = _db_setting(f"{purpose}_reasoning") or thinking_mode
@@ -197,6 +212,7 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
         "model": resolved,
         "reasoning_effort": thinking_mode,
         "api_style": resolved_style,
+        "max_tokens": resolve_max_tokens(base),
     }
     # A saved "" is an explicit empty list; only a missing setting falls back to mira.yaml.
     if db_fallbacks is not None:

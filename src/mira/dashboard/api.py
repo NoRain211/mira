@@ -396,6 +396,10 @@ class ModelsResponse(BaseModel):
     # Critic for self-critique ("" = indexing model) and second-opinion review models.
     critique_model: str = ""
     ensemble_models: list[str] = []
+    # Stored output budget for every model ("" = mira.yaml's llm.max_tokens).
+    max_tokens: str = ""
+    config_max_tokens: int = 16384
+    max_tokens_options: list[int] = []
 
 
 class ModelsUpdate(BaseModel):
@@ -413,6 +417,8 @@ class ModelsUpdate(BaseModel):
     security_fallbacks: list[str] | None = None
     critique_model: str | None = None
     ensemble_models: list[str] | None = None
+    # None leaves it untouched; "" clears it so mira.yaml applies.
+    max_tokens: str | None = None
 
 
 class GlobalSettingsResponse(BaseModel):
