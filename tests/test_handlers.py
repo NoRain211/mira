@@ -10,6 +10,7 @@ import pytest
 
 from mira.config import CommandsConfig, MiraConfig
 from mira.models import PRInfo, ReviewComment, ReviewResult, Severity
+from mira.outbound_webhooks import sample_data
 from mira.platforms.github.webhook import (
     handle_comment,
     handle_pause_resume,
@@ -321,7 +322,10 @@ async def test_failed_review_fires_review_failed(
 
     data = _data_for(mock_dispatch, "review.failed")
     assert data["repo"] == "testowner/testrepo"
+    assert data["number"] == 42
     assert "boom" in data["error"]
+    # The Settings "Send test" sample must match the real payload shape.
+    assert data.keys() == sample_data("review.failed").keys()
 
 
 @patch("mira.platforms.handlers.ReviewEngine")
@@ -752,3 +756,57 @@ async def test_handle_pause_exception_logged_not_raised(
         await handle_pause_resume(_make_pause_comment_payload(), mock_app_auth, "mira-bot", "pause")
 
     assert "boom" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Free-form thread reply: disagreement is an implicit reject
+# ---------------------------------------------------------------------------
+
+
+async def _run_disagreement_reply(config: MiraConfig):
+    from mira.platforms.handlers import run_thread_reply
+
+    provider = MagicMock()
+    provider.get_repo_permission = AsyncMock(return_value="write")
+    provider.reply_to_review_comment = AsyncMock()
+    provider.resolve_threads = AsyncMock()
+    llm = MagicMock()
+    llm.complete_with_tools = AsyncMock(
+        return_value='{"intent": "disagreement", "reply": "Understood."}'
+    )
+    store = MagicMock()
+    pr_info = MagicMock(owner="testowner", repo="testrepo", number=42, url="u")
+    with (
+        patch("mira.platforms.handlers.load_config", return_value=config),
+        patch("mira.platforms.handlers.create_llm", return_value=llm),
+        patch("mira.platforms.handlers.llm_config_for"),
+        patch("mira.platforms.handlers._open_store", return_value=store),
+    ):
+        await run_thread_reply(
+            provider,
+            pr_info,
+            "I disagree",
+            1,
+            thread_id="T1",
+            actor="alice",
+        )
+    return provider, store
+
+
+async def test_thread_reply_disagreement_resolves_when_reject_allowed():
+    provider, store = await _run_disagreement_reply(MiraConfig())
+    provider.reply_to_review_comment.assert_awaited_once()
+    provider.resolve_threads.assert_awaited_once()
+    store.record_feedback.assert_called_once()
+
+
+async def test_thread_reply_disagreement_skips_mutations_when_reject_denied():
+    config = MiraConfig(
+        commands=CommandsConfig.model_validate({"reject": {"blocked_users": ["alice"]}})
+    )
+    provider, store = await _run_disagreement_reply(config)
+    # ``ask`` is still allowed, so the reply is posted ...
+    provider.reply_to_review_comment.assert_awaited_once()
+    # ... but the denied ``reject`` must not resolve the thread or record feedback.
+    provider.resolve_threads.assert_not_awaited()
+    store.record_feedback.assert_not_called()

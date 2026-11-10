@@ -14,7 +14,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from mira.config import LLMConfig
-from mira.exceptions import LLMError, NonRetriableLLMError
+from mira.exceptions import LLMError, NonRetriableLLMError, StructuredOutputError
 from mira.llm import oauth_accounts
 from mira.llm.base import _retriable
 from mira.llm.tool_schemas import SUBMIT_REVIEW_TOOL, SUBMIT_WALKTHROUGH_TOOL
@@ -241,20 +241,29 @@ class AnthropicOAuthProvider:
         messages: list[dict[str, str]],
         tools: list[dict],
         temperature: float | None = None,
+        force_tool: str | None = None,
     ) -> str:
         if not tools:
             raise LLMError("no_tools")
         wire_tools = [_tool(t) for t in tools]
+        forced = _wire_name(force_tool) if force_tool else wire_tools[0]["name"]
         data = await self._send(
             messages,
             tools=wire_tools,
-            tool_choice={"type": "tool", "name": wire_tools[0]["name"]},
+            tool_choice={"type": "tool", "name": forced},
             temperature=self.config.temperature if temperature is None else temperature,
         )
         for block in data.get("content", []):
-            if block.get("type") == "tool_use":
+            if block.get("type") == "tool_use" and (not force_tool or block.get("name") == forced):
                 return json.dumps(block.get("input") or {})
         text = self._text(data)
+        if force_tool:
+            raise StructuredOutputError(
+                "structured_output",
+                model=self.config.model,
+                tool=force_tool,
+                excerpt=" ".join(text.split())[:300] or "(empty response)",
+            )
         if text:
             logger.warning("Claude returned text instead of a tool call; using it as fallback")
             return _json_object(text)

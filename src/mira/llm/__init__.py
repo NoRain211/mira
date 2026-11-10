@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from mira.config import LLMConfig
-from mira.exceptions import NonRetriableLLMError
+from mira.exceptions import NonRetriableLLMError, StructuredOutputError
 from mira.llm.base import LLMProviderProtocol
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,8 @@ class ModelChain:
                 return await call(self.providers[i])
             except Exception as exc:
                 last = exc
-                if not isinstance(exc, NonRetriableLLMError):
+                # Prose instead of a tool call is the caller's to correct, not a sick model.
+                if not isinstance(exc, (NonRetriableLLMError, StructuredOutputError)):
                     _cooling_until[self.models[i]] = time.time() + CHAIN_COOLDOWN_SECONDS
                 logger.warning("Model %s failed (%s); trying the next model", self.models[i], exc)
         assert last is not None
@@ -88,8 +89,11 @@ class ModelChain:
         messages: list[dict[str, str]],
         tools: list[dict],
         temperature: float | None = None,
+        force_tool: str | None = None,
     ) -> str:
-        return await self._run(lambda p: p.complete_with_tools(messages, tools, temperature))
+        return await self._run(
+            lambda p: p.complete_with_tools(messages, tools, temperature, force_tool)
+        )
 
     async def complete_agentic(
         self, messages: list, tools: list[dict], temperature: float | None = None

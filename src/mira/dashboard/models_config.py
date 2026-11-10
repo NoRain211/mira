@@ -120,13 +120,21 @@ def get_security_model(
     return get_review_model(config, db_review_model)
 
 
-def get_review_thinking_mode(config: LLMConfig, db_value: str | None = None) -> str | None:
-    """Resolve the review thinking mode: DB → config.review_reasoning_effort → None.
+# Thinking effort used when neither the dashboard nor mira.yaml sets one. The
+# published benchmark ran with it; "off" has to be chosen explicitly.
+DEFAULT_REVIEW_REASONING_EFFORT = "medium"
 
-    An empty DB value inherits mira.yaml; explicit "off" disables reasoning.
+
+def get_review_thinking_mode(config: LLMConfig, db_value: str | None = None) -> str | None:
+    """Resolve the review thinking mode: DB → mira.yaml → the product default.
+
+    A stored "" is unset and falls through; a stored "off" is the admin's
+    explicit choice and wins over the config. "off" anywhere normalizes to
+    None ("no reasoning"). The models form shows and round-trips the resolved
+    mode, so it never writes an "off" the admin did not pick.
     """
-    resolved = db_value or config.review_reasoning_effort
-    if not resolved or resolved == "off":
+    resolved = db_value or config.review_reasoning_effort or DEFAULT_REVIEW_REASONING_EFFORT
+    if resolved == "off":
         return None
     return resolved
 

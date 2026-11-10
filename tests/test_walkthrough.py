@@ -145,6 +145,24 @@ class TestParseWalkthroughResponse:
         with pytest.raises(ResponseParseError, match="Expected JSON object"):
             parse_walkthrough_response("[1, 2, 3]")
 
+    @pytest.mark.parametrize(
+        "payload",
+        [{}, {"summary": ""}, {"summary": " \n\t"}, {"Summary": "Changes"}],
+    )
+    def test_rejects_empty_walkthrough_instead_of_rendering_only_stats(self, payload):
+        from mira.exceptions import ResponseParseError
+
+        with pytest.raises(ResponseParseError, match="non-empty summary"):
+            parse_walkthrough_response(json.dumps(payload))
+
+    def test_rejects_tool_xml_leaked_into_summary(self):
+        from mira.exceptions import ResponseParseError
+
+        # Shape observed in the posted walkthroughs on PRs #377 and #366.
+        raw = json.dumps({"summary": "Fix scanning.</summary>\n</invoke>"})
+        with pytest.raises(ResponseParseError, match="leaked tool-call XML"):
+            parse_walkthrough_response(raw)
+
     def test_with_sequence_diagram(self):
         raw = json.dumps(
             {
@@ -518,3 +536,21 @@ class TestBuildReviewStats:
         comments = [self._make_comment(Severity.SUGGESTION)] * 3
         stats = build_review_stats(comments)
         assert stats == {Severity.SUGGESTION: 3}
+
+
+def test_markdown_with_skipped_files_is_utf8_encodable():
+    """The "Reviewed N of M files" heading must be a real emoji, not two UTF-16 halves.
+
+    Python doesn't combine "\\ud83d\\udccb" escapes, so the heading used to make
+    the whole walkthrough unencodable ("surrogates not allowed") on any PR with
+    skipped files.
+    """
+    wt = WalkthroughResult(summary="s")
+    md = wt.to_markdown(
+        bot_name="mira",
+        reviewed_files=1,
+        skipped_paths=["b.py"],
+        total_paths=["a.py", "b.py"],
+    )
+    assert "### \U0001f4cb Reviewed 1 of 2 files" in md
+    md.encode("utf-8")

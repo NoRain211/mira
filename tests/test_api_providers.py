@@ -55,7 +55,7 @@ def test_openrouter_keeps_vendor_prefix():
     assert headers["Authorization"] == "Bearer or-key"
     body = {}
     llm._apply_reasoning(body)
-    assert body["reasoning"] == {"effort": "xhigh"}
+    assert body["reasoning_effort"] == "xhigh"
 
 
 def test_keyless_local_provider_sends_no_auth():
