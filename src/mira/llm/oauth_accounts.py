@@ -264,7 +264,7 @@ def anthropic_headers(access: str) -> dict[str, str]:
         "anthropic-version": "2023-06-01",
         "anthropic-beta": ANTHROPIC_OAUTH_BETA,
         "Content-Type": "application/json",
-        "User-Agent": "claude-cli/2.1.280 (external, cli)",
+        "User-Agent": "claude-cli/2.1.322 (external, cli)",
         "X-App": "cli",
         "X-Claude-Code-Session-Id": f"{h[:8]}-{h[8:12]}-4{h[13:16]}-a{h[17:20]}-{h[20:32]}",
         "x-client-request-id": str(uuid.uuid4()),
