@@ -38,11 +38,11 @@ class TestKeepRule:
         c = _comment(severity=Severity.BLOCKER, confidence=1.0)
         assert not _critique_keep({"evidence": "unsupported"}, c)
 
-    def test_plausible_kept_only_when_severe(self):
+    def test_plausible_kept_at_any_severity(self):
         # The confidence floor is filter_noise's job, applied before critique.
         assert _critique_keep({"evidence": "plausible"}, _comment(Severity.WARNING, confidence=0.7))
         assert _critique_keep({"evidence": "plausible"}, _comment(Severity.BLOCKER, 0.95))
-        assert not _critique_keep({"evidence": "plausible"}, _comment(Severity.SUGGESTION, 0.95))
+        assert _critique_keep({"evidence": "plausible"}, _comment(Severity.SUGGESTION, 0.3))
 
     def test_legacy_keep_boolean_honored(self):
         c = _comment()
@@ -195,7 +195,7 @@ class TestEvidenceGradedCritique:
         ]
         kept = await self_critique(AsyncMock(), comments, diff_files=diff_files)
 
-        assert [c.title for c in kept] == ["proven bug"]
+        assert [c.title for c in kept] == ["proven bug", "plausible low-sev"]
         # The critic saw the actual hunk, not just the citation.
         assert "should_block?" in captured["prompt"]
 
@@ -230,7 +230,7 @@ class TestEvidenceGradedCritique:
         assert entry["reason"] == "unsupported: code contradicts"
 
     @pytest.mark.asyncio
-    async def test_held_back_collects_plausible_drops_only(self, monkeypatch):
+    async def test_plausible_is_posted_not_held_back(self, monkeypatch):
         comments = [
             _comment(title="proven bug"),
             _comment(title="maybe", severity=Severity.SUGGESTION, confidence=0.9),
@@ -255,9 +255,8 @@ class TestEvidenceGradedCritique:
         held_back: list[ReviewComment] = []
         kept = await self_critique(AsyncMock(), comments, held_back=held_back)
 
-        assert [c.title for c in kept] == ["proven bug"]
-        # Structured objects, not audit strings; unsupported drops excluded.
-        assert held_back == [comments[1]]
+        assert [c.title for c in kept] == ["proven bug", "maybe"]
+        assert held_back == []
 
     @pytest.mark.asyncio
     async def test_audit_records_missing_verdict(self, monkeypatch):

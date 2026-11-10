@@ -29,7 +29,7 @@ from mira.llm.response_parser import (
     parse_llm_response,
 )
 from mira.llm.tool_schemas import SUBMIT_CRITIQUE_TOOL, SUBMIT_REVIEW_TOOL
-from mira.models import ChunkFailure, HunkInfo, KeyIssue, ReviewComment, Severity, WalkthroughResult
+from mira.models import ChunkFailure, HunkInfo, KeyIssue, ReviewComment, WalkthroughResult
 
 logger = logging.getLogger(__name__)
 
@@ -884,9 +884,6 @@ async def dependency_review_pass(
 _MAX_HUNK_EVIDENCE_CHARS = 2400
 # Diff lines shown on each side of a comment's cited lines in the critic's evidence.
 _EVIDENCE_CONTEXT_LINES = 20
-# Confidence floor for keeping a warning-or-worse finding the critic graded
-# "plausible" (consistent with the code, not contradicted, but not proven).
-_PLAUSIBLE_MIN_CONF = 0.75
 
 
 def _hunk_evidence(comment: ReviewComment, diff_files: list | None) -> str:
@@ -945,11 +942,9 @@ def _critique_keep(verdict: dict, comment: ReviewComment) -> bool:
     against the benchmark harness instead of buried in prompt wording.
     """
     evidence = verdict.get("evidence")
-    if evidence == "proven":
+    # Plausible findings already cleared filter_noise's confidence threshold.
+    if evidence in ("proven", "plausible"):
         return True
-    if evidence == "plausible":
-        # filter_noise already applied the configured confidence floor before critique.
-        return comment.severity >= Severity.WARNING
     if evidence == "unsupported":
         return False
     # Older binary shape (model fallback): honor it.
