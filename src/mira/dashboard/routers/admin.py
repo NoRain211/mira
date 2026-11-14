@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+from contextlib import nullcontext
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
@@ -30,7 +32,7 @@ from mira.dashboard.api import (
     logger,
     router,
 )
-from mira.index.store import IndexStore
+from mira.index.store import IndexingSuperseded, IndexStore
 
 
 async def _sync_platform_repos(
@@ -53,33 +55,53 @@ async def _register_and_index_repo(platform: str, env_token: str, body: BaseMode
         raise HTTPException(status_code=400, detail="project must be 'owner/repo'")
 
     _api._app_db.register_repo(owner, repo, platform=platform)
-    _api._app_db.set_repo_status(owner, repo, "indexing", platform=platform)
 
     async def _index() -> None:
-        from mira.index.indexer import index_repo
+        from mira.index.indexer import IndexingRecoveryPending, index_repo
         from mira.platforms.fetch import EmptyRepoError, make_fetcher
 
         store = None
+        run = None
         try:
-            store = IndexStore.open(owner, repo, platform=platform)
+            store = IndexStore.open(owner, repo, platform=platform, allow_fallback=False)
+            run = store.claim_index_run()
+            with store.index_write(run):
+                _api._app_db.set_repo_status(owner, repo, "indexing", platform=platform)
             await index_repo(
-                owner=owner, repo=repo, store=store, fetcher=make_fetcher(platform, token)
-            )
-            # index_repo returns files re-indexed this run, not the store total.
-            total_files = len(store.all_paths())
-            _api._app_db.set_repo_status(
-                owner,
-                repo,
-                "ready",
-                files_indexed=total_files,
-                bump_last_indexed=True,
+                owner=owner,
+                repo=repo,
+                store=store,
+                fetcher=make_fetcher(platform, token),
+                run=run,
                 platform=platform,
             )
-        except EmptyRepoError as empty:
-            _api._app_db.set_repo_status(owner, repo, "empty", error=str(empty), platform=platform)
+            with store.index_write(run):
+                _api._app_db.set_repo_status(
+                    owner,
+                    repo,
+                    "ready",
+                    files_indexed=len(store.all_paths()),
+                    bump_last_indexed=True,
+                    platform=platform,
+                )
+        except IndexingSuperseded:
+            logger.info("Indexing superseded for %s/%s", owner, repo)
         except Exception as exc:
-            logger.exception("%s indexing failed for %s/%s", platform.title(), owner, repo)
-            _api._app_db.set_repo_status(owner, repo, "failed", error=str(exc), platform=platform)
+            try:
+                with store.index_write(run) if store is not None and run else nullcontext():
+                    if isinstance(exc, IndexingRecoveryPending):
+                        status = "indexing"
+                    else:
+                        status = "empty" if isinstance(exc, EmptyRepoError) else "failed"
+                    _api._app_db.set_repo_status(
+                        owner, repo, status, error=str(exc), platform=platform
+                    )
+                    if status == "failed":
+                        logger.exception(
+                            "%s indexing failed for %s/%s", platform.title(), owner, repo
+                        )
+            except IndexingSuperseded:
+                logger.info("Indexing superseded for %s/%s", owner, repo)
         finally:
             if store is not None:
                 store.close()
@@ -203,9 +225,13 @@ async def get_models() -> ModelsResponse:
         get_security_model,
         llm_config_for,
         resolve_api_style,
+        resolve_indexing_temperature,
     )
 
     config = load_config()
+    indexing_temperature, temperature_source = resolve_indexing_temperature(
+        config.llm, _api._app_db.get_setting("indexing_temperature")
+    )
     db_indexing = _api._app_db.get_setting("indexing_model")
     db_review = _api._app_db.get_setting("review_model")
     db_security = _api._app_db.get_setting("security_model")
@@ -230,6 +256,9 @@ async def get_models() -> ModelsResponse:
 
     return ModelsResponse(
         indexing_model=indexing,
+        indexing_temperature=indexing_temperature,
+        indexing_temperature_source=temperature_source,
+        config_indexing_temperature=config.llm.indexing_temperature,
         review_model=review,
         security_model=security,
         backend=backend,
@@ -389,6 +418,11 @@ def set_models(body: ModelsUpdate, request: Request) -> dict:
         if fallbacks is not None:
             ids = dict.fromkeys(m.strip() for m in fallbacks if m.strip() and "," not in m)
             settings[f"{tier}_fallback_models"] = ",".join(ids)
+    # Older clients omit this field; null explicitly clears the override.
+    if "indexing_temperature" in body.model_fields_set:
+        settings["indexing_temperature"] = (
+            "" if body.indexing_temperature is None else json.dumps(body.indexing_temperature)
+        )
     if body.critique_model is not None:
         settings["critique_model"] = body.critique_model.strip()
     if body.ensemble_models is not None:

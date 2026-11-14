@@ -519,19 +519,21 @@ def _security_llm(fallback: LLMProviderProtocol) -> LLMProviderProtocol:
         return fallback
 
 
-def _critique_llm(base: LLMConfig) -> LLMProviderProtocol | None:
+def _critique_llm(base: LLMConfig, *, use_dashboard: bool = True) -> LLMProviderProtocol | None:
     """The configured critic model, or None to grade on the indexing tier."""
     try:
-        config = critique_config(base)
+        config = critique_config(base, use_dashboard=use_dashboard)
         return create_llm(config) if config else None
     except Exception:
         return None
 
 
-def second_opinion_llms(base: LLMConfig) -> list[LLMProviderProtocol]:
+def second_opinion_llms(
+    base: LLMConfig, *, use_dashboard: bool = True
+) -> list[LLMProviderProtocol]:
     """Providers for the configured second-opinion review models (may be empty)."""
     providers = []
-    for config in ensemble_configs(base):
+    for config in ensemble_configs(base, use_dashboard=use_dashboard):
         try:
             providers.append(create_llm(config))
         except Exception as exc:

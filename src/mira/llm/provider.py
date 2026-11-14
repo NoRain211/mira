@@ -39,7 +39,12 @@ class LLMProvider(OpenAICompatibleProvider):
         return f"{self.config.base_url.rstrip('/')}/chat/completions"
 
     async def _post(
-        self, client: httpx.AsyncClient, body: dict, temperature: float | None
+        self,
+        client: httpx.AsyncClient,
+        body: dict,
+        temperature: float | None,
+        *,
+        omit_temperature: bool = False,
     ) -> httpx.Response:
         """POST to /chat/completions, retrying once per rejected reasoning, temperature or budget."""
         if body["model"] in self._no_temperature:
@@ -68,7 +73,9 @@ class LLMProvider(OpenAICompatibleProvider):
             # Reasoning unsupported on this model/endpoint — strip what was
             # refused and review without thinking instead of failing.
             self._drop_rejected_reasoning(body, body["model"])
-            if body["model"] not in self._no_temperature:
+            if omit_temperature:
+                body.pop("temperature", None)
+            elif body["model"] not in self._no_temperature:
                 body["temperature"] = (
                     temperature if temperature is not None else self.config.temperature
                 )
@@ -98,6 +105,8 @@ class LLMProvider(OpenAICompatibleProvider):
         json_mode: bool,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        *,
+        omit_temperature: bool = False,
     ) -> str:
         """Make a single LLM call with retries against the /chat/completions endpoint.
 
@@ -122,15 +131,19 @@ class LLMProvider(OpenAICompatibleProvider):
         self._cap_output_budget(body)
         self._apply_reasoning(body)
         self._apply_prompt_caching(body)
+        if omit_temperature:
+            body.pop("temperature", None)
 
         async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
-            resp = await self._post(client, body, temperature)
+            resp = await self._post(client, body, temperature, omit_temperature=omit_temperature)
             self._handle_error(resp)
             data = resp.json()
             # A caller that set its own budget asked for a short answer; only
             # the config default is raised when the model ran out of room.
             retry_body = self._budget_exhausted_retry(body, data) if max_tokens is None else None
             if retry_body is not None:
+                if omit_temperature:
+                    retry_body.pop("temperature", None)
                 self._account_usage(data)
                 resp = await client.post(
                     self._chat_url(), headers=self._build_headers(), json=retry_body

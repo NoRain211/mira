@@ -8,11 +8,31 @@ model there; this file picks it up automatically.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
-from mira.config import LLMConfig
+from pydantic import TypeAdapter, ValidationError
+
+from mira.config import IndexingTemperature, LLMConfig
 from mira.llm import registry
 
 logger = logging.getLogger(__name__)
+_INDEXING_TEMPERATURE: TypeAdapter[IndexingTemperature] = TypeAdapter(IndexingTemperature)
+
+
+def resolve_indexing_temperature(
+    config: LLMConfig, db_value: str | None = None
+) -> tuple[IndexingTemperature, Literal["dashboard", "config"]]:
+    """Resolve a validated indexing temperature: DB → config → 0.0."""
+    if db_value:
+        try:
+            return _INDEXING_TEMPERATURE.validate_json(db_value), "dashboard"
+        except ValidationError:
+            logger.warning(
+                "Invalid saved indexing_temperature. Using deployment config. "
+                "Clear the override in Models settings."
+            )
+    return config.indexing_temperature, "config"
+
 
 # Thinking-mode options for each model slot. "off" disables extended thinking
 # (today's behavior); low/medium/high/xhigh map to the provider's unified
@@ -148,7 +168,7 @@ def get_review_thinking_mode(config: LLMConfig, db_value: str | None = None) -> 
     return resolved
 
 
-def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
+def llm_config_for(purpose: str, base: LLMConfig, *, use_dashboard: bool = True) -> LLMConfig:
     """Return an LLMConfig with the appropriate model set for the given purpose.
 
     Reads the DB setting first (via _app_db), falls back to config fields.
@@ -160,25 +180,28 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
     db_review: str | None = None
     db_style: str | None = None
     db_fallbacks: str | None = None
-    try:
-        from mira.dashboard.api import _app_db
+    db_temperature: str | None = None
+    if use_dashboard:
+        try:
+            from mira.dashboard.api import _app_db
 
-        if _app_db is not None:
-            db_fallbacks = _app_db.get_setting(f"{purpose}_fallback_models")
-            if purpose == "security" and db_fallbacks is None:
-                db_fallbacks = _app_db.get_setting("review_fallback_models")
-            if purpose == "indexing":
-                db_model = _app_db.get_setting("indexing_model")
-            elif purpose == "review":
-                db_model = _app_db.get_setting("review_model")
-                db_thinking = _app_db.get_setting("review_thinking_mode")
-            elif purpose == "security":
-                db_model = _app_db.get_setting("security_model")
-                db_thinking = _app_db.get_setting("review_thinking_mode")
-                db_review = _app_db.get_setting("review_model")
-            db_style = _app_db.get_setting("api_style")
-    except Exception:
-        pass  # DB not available — resolve from config fields alone
+            if _app_db is not None:
+                db_fallbacks = _app_db.get_setting(f"{purpose}_fallback_models")
+                if purpose == "security" and db_fallbacks is None:
+                    db_fallbacks = _app_db.get_setting("review_fallback_models")
+                if purpose == "indexing":
+                    db_model = _app_db.get_setting("indexing_model")
+                    db_temperature = _app_db.get_setting("indexing_temperature")
+                elif purpose == "review":
+                    db_model = _app_db.get_setting("review_model")
+                    db_thinking = _app_db.get_setting("review_thinking_mode")
+                elif purpose == "security":
+                    db_model = _app_db.get_setting("security_model")
+                    db_thinking = _app_db.get_setting("review_thinking_mode")
+                    db_review = _app_db.get_setting("review_model")
+                db_style = _app_db.get_setting("api_style")
+        except Exception:
+            pass  # DB not available — resolve from config fields alone
 
     thinking_mode: str | None = None
     resolved_style = resolve_api_style(base, db_style)
@@ -198,12 +221,12 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
             update={
                 "reasoning_effort": None,
                 "api_style": resolved_style,
-                "max_tokens": resolve_max_tokens(base),
+                "max_tokens": resolve_max_tokens(base) if use_dashboard else base.max_tokens,
             }
         )
 
     if purpose != "review":
-        effort = _db_setting(f"{purpose}_reasoning") or thinking_mode
+        effort = (_db_setting(f"{purpose}_reasoning") if use_dashboard else None) or thinking_mode
         thinking_mode = None if effort == "off" else effort
 
     source = "dashboard setting" if db_model else ("mira.yaml" if config_model else "default")
@@ -212,7 +235,12 @@ def llm_config_for(purpose: str, base: LLMConfig) -> LLMConfig:
         "model": resolved,
         "reasoning_effort": thinking_mode,
         "api_style": resolved_style,
-        "max_tokens": resolve_max_tokens(base),
+        "max_tokens": resolve_max_tokens(base) if use_dashboard else base.max_tokens,
+        "indexing_temperature": (
+            resolve_indexing_temperature(base, db_temperature)[0]
+            if purpose == "indexing"
+            else base.indexing_temperature
+        ),
     }
     # A saved "" is an explicit empty list; only a missing setting falls back to mira.yaml.
     if db_fallbacks is not None:
@@ -234,12 +262,12 @@ def _db_setting(key: str) -> str | None:
         return None
 
 
-def critique_config(base: LLMConfig) -> LLMConfig | None:
+def critique_config(base: LLMConfig, *, use_dashboard: bool = True) -> LLMConfig | None:
     """Critic config, or None when the indexing provider already has the same effort."""
-    stored = _db_setting("critique_model")
+    stored = _db_setting("critique_model") if use_dashboard else None
     model = stored if stored is not None else base.critique_model
-    indexing = llm_config_for("indexing", base)
-    effort = _db_setting("critique_reasoning") or None
+    indexing = llm_config_for("indexing", base, use_dashboard=use_dashboard)
+    effort = (_db_setting("critique_reasoning") if use_dashboard else None) or None
     effort = None if effort == "off" else effort
     if not model and effort == indexing.reasoning_effort:
         return None
@@ -253,13 +281,13 @@ def critique_config(base: LLMConfig) -> LLMConfig | None:
     )
 
 
-def ensemble_configs(base: LLMConfig) -> list[LLMConfig]:
+def ensemble_configs(base: LLMConfig, *, use_dashboard: bool = True) -> list[LLMConfig]:
     """Review-tier configs for each second-opinion model (DB -> mira.yaml)."""
-    stored = _db_setting("ensemble_models")
+    stored = _db_setting("ensemble_models") if use_dashboard else None
     models = parse_fallbacks(stored) if stored is not None else base.ensemble_models
     if not models:
         return []
-    review = llm_config_for("review", base)
+    review = llm_config_for("review", base, use_dashboard=use_dashboard)
     return [
         review.model_copy(update={"model": m, "fallback_model": None, "fallback_models": []})
         for m in models

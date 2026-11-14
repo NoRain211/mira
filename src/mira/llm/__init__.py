@@ -81,8 +81,14 @@ class ModelChain:
         json_mode: bool = True,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        *,
+        omit_temperature: bool = False,
     ) -> str:
-        return await self._run(lambda p: p.complete(messages, json_mode, temperature, max_tokens))
+        return await self._run(
+            lambda p: p.complete(
+                messages, json_mode, temperature, max_tokens, omit_temperature=omit_temperature
+            )
+        )
 
     async def complete_with_tools(
         self,
