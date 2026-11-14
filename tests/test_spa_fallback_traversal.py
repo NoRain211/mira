@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import anyio
 import pytest
 
 from mira.platforms.github.auth import GitHubAppAuth
@@ -23,15 +24,24 @@ async def _raw_get(app, path: str) -> tuple[int, bytes]:
     body = bytearray()
     status = {"code": 0}
     messages = [{"type": "http.request", "body": b"", "more_body": False}]
+    response_complete = anyio.Event()
 
     async def receive():
-        return messages.pop(0)
+        if messages:
+            return messages.pop(0)
+        # Streaming file responses poll `receive` for a disconnect while they
+        # send, so wait for the response to finish the way a real server would
+        # wait for the client to hang up.
+        await response_complete.wait()
+        return {"type": "http.disconnect"}
 
     async def send(message):
         if message["type"] == "http.response.start":
             status["code"] = message["status"]
         elif message["type"] == "http.response.body":
             body.extend(message.get("body", b""))
+            if not message.get("more_body", False):
+                response_complete.set()
 
     await app(scope, receive, send)
     return status["code"], bytes(body)
