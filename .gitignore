@@ -39,6 +39,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+-app.env
 
 # Local Mira data
 # - data/app.db is the SQLite-backed app DB
