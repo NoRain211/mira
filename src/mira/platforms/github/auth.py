@@ -67,10 +67,12 @@ class GitHubAppAuth:
 
     def _generate_jwt(self) -> str:
         """Generate an RS256-signed JWT for GitHub App authentication."""
-        now = int(time.time())
+        iat = int(time.time()) - 60  # back-dated for clock drift
         payload = {
-            "iat": now - 60,  # issued-at with clock drift buffer
-            "exp": now + 600,  # 10 minute expiry
+            "iat": iat,
+            # GitHub rejects exp > 10 min ahead of *its* clock; now+600 failed
+            # intermittently under a second of skew, so leave the margin.
+            "exp": iat + 600,
             "iss": self._app_id,
         }
         return jwt.encode(payload, self._private_key, algorithm="RS256")

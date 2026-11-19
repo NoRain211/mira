@@ -42,8 +42,8 @@ def test_generate_jwt_structure(app_auth: GitHubAppAuth) -> None:
     now = int(time.time())
     assert claims["iat"] <= now
     assert claims["exp"] > now
-    # exp should be ~10 minutes from now
-    assert claims["exp"] - now <= 660
+    # exp must stay under 10 min ahead or GitHub rejects it under any clock skew
+    assert claims["exp"] - now < 600
 
 
 async def test_get_installation_token_fresh(
