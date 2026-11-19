@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import ExitStack
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +19,12 @@ from mira.platforms.github.webhook import (
     handle_pull_request,
     handle_thread_reject,
 )
-from mira.platforms.handlers import _REJECT_KEYWORDS, classify_command
+from mira.platforms.handlers import (
+    _REJECT_KEYWORDS,
+    classify_command,
+    run_pr_command,
+    run_pr_review,
+)
 
 
 def _make_pr_payload() -> dict[str, Any]:
@@ -810,3 +817,84 @@ async def test_thread_reply_disagreement_skips_mutations_when_reject_denied():
     # ... but the denied ``reject`` must not resolve the thread or record feedback.
     provider.resolve_threads.assert_not_awaited()
     store.record_feedback.assert_not_called()
+
+
+# ── Cancellation cleanup ─────────────────────────────────────────────────────
+
+
+def _command_patches(engine: AsyncMock, tracker: MagicMock) -> list:
+    """Patches shared by the run_pr_command tests below."""
+    return [
+        patch("mira.platforms.handlers.load_config", return_value=MiraConfig()),
+        patch("mira.platforms.handlers.create_llm"),
+        patch("mira.platforms.handlers.llm_config_for", return_value=MagicMock()),
+        patch("mira.dashboard.models_config.llm_config_for", return_value=MagicMock()),
+        patch(
+            "mira.platforms.handlers.is_command_allowed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch("mira.platforms.handlers.review_tracker", tracker),
+        patch("mira.platforms.handlers.ReviewEngine", return_value=engine),
+    ]
+
+
+async def test_cancelled_review_command_releases_tracker() -> None:
+    """Cancellation is a BaseException, so `except Exception` misses it and the
+    tracker stays stuck on "reviewing" — blocking every later trigger."""
+    engine = AsyncMock()
+    engine.review_pr = AsyncMock(side_effect=asyncio.CancelledError)
+    tracker = MagicMock()
+
+    with ExitStack() as stack:
+        for patcher in _command_patches(engine, tracker):
+            stack.enter_context(patcher)
+        stack.enter_context(pytest.raises(asyncio.CancelledError))
+        tracker.try_start.return_value = True
+        await run_pr_command(
+            MagicMock(),
+            "testowner",
+            "testrepo",
+            42,
+            "https://github.com/testowner/testrepo/pull/42",
+            "review",
+            "alice",
+            "mira-bot",
+            pr_title="Test PR",
+        )
+
+    tracker.fail.assert_called_once_with("testowner/testrepo", 42, "CancelledError")
+    tracker.complete.assert_not_called()
+
+
+async def test_cancelled_pr_review_releases_tracker() -> None:
+    """The automatic PR path must also release the claim on cancellation."""
+    engine = AsyncMock()
+    engine.review_pr = AsyncMock(side_effect=asyncio.CancelledError)
+    tracker = MagicMock()
+    tracker.try_start.return_value = True
+    app_db = MagicMock()
+    app_db.get_repo.return_value = MagicMock(status="ready")
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("mira.platforms.handlers.load_config", return_value=MiraConfig()))
+        stack.enter_context(patch("mira.platforms.handlers.create_llm"))
+        stack.enter_context(
+            patch("mira.platforms.handlers.llm_config_for", return_value=MagicMock())
+        )
+        stack.enter_context(patch("mira.platforms.handlers.ReviewEngine", return_value=engine))
+        stack.enter_context(patch("mira.platforms.handlers.review_tracker", tracker))
+        stack.enter_context(patch("mira.dashboard.api._app_db", app_db))
+        stack.enter_context(pytest.raises(asyncio.CancelledError))
+        await run_pr_review(
+            MagicMock(),
+            "testowner",
+            "testrepo",
+            42,
+            "https://github.com/testowner/testrepo/pull/42",
+            False,
+            "mira-bot",
+        )
+
+    tracker.fail.assert_called_once_with("testowner/testrepo", 42, "CancelledError")
+    tracker.complete.assert_not_called()

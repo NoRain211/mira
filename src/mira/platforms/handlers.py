@@ -178,8 +178,11 @@ async def run_pr_review(
             review_tracker.fail(repo_full, number, follow_up_error)
         else:
             review_tracker.complete(repo_full, number)
-    except Exception as exc:
-        review_tracker.fail(repo_full, number, str(exc))
+    except BaseException as exc:
+        # BaseException, not Exception: a cancelled review (shutdown, task
+        # cancellation) must release the claim too, or every later trigger
+        # logs "Review already in progress" and silently does nothing.
+        review_tracker.fail(repo_full, number, str(exc) or type(exc).__name__)
         raise
 
     # The walkthrough comment already carries the "more accurate after indexing"
@@ -294,8 +297,8 @@ async def run_pr_command(
         try:
             await engine.review_pr(pr_url)
             review_tracker.complete(repo_full, number)
-        except Exception as exc:
-            review_tracker.fail(repo_full, number, str(exc))
+        except BaseException as exc:
+            review_tracker.fail(repo_full, number, str(exc) or type(exc).__name__)
             raise
     elif is_review:
         engine = ReviewEngine(
@@ -313,8 +316,8 @@ async def run_pr_command(
         try:
             await engine.review_pr(pr_url)
             review_tracker.complete(repo_full, number)
-        except Exception as exc:
-            review_tracker.fail(repo_full, number, str(exc))
+        except BaseException as exc:
+            review_tracker.fail(repo_full, number, str(exc) or type(exc).__name__)
             raise
     else:
         pr_info = await provider.get_pr_info(pr_url)
