@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 _PR_ACTIONS = {"opened", "synchronize", "reopened"}
 _PR_MERGE_ACTIONS = {"closed"}
+# Only people with write-level standing on the repo may command the bot, so a
+# stranger on a public repo can't spend the deployment's LLM budget or pause it.
+_TRUSTED_COMMENT_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 class TaskScheduler(Protocol):
@@ -560,6 +563,10 @@ async def dispatch_github_event(
             return "ignored"
         names = mention_names(bot_name, await app_auth.get_bot_identity())
         if "pull_request" in payload.get("issue", {}) and has_mention(comment_body, names):
+            association = payload.get("comment", {}).get("author_association", "")
+            if association not in _TRUSTED_COMMENT_ASSOCIATIONS:
+                logger.info("Ignoring command from %s (%s)", comment_user, association or "?")
+                return "ignored"
             cmd_word = command_after_mention(comment_body, names)
             if cmd_word in _PAUSE_KEYWORDS | _RESUME_KEYWORDS:
                 background_tasks.add_task(
@@ -578,6 +585,12 @@ async def dispatch_github_event(
             return "ignored"
         names = mention_names(bot_name, await app_auth.get_bot_identity())
         if has_mention(rc_body, names):
+            association = payload.get("comment", {}).get("author_association", "")
+            if association not in _TRUSTED_COMMENT_ASSOCIATIONS:
+                logger.info(
+                    "Ignoring review-comment command from %s (%s)", rc_user, association or "?"
+                )
+                return "ignored"
             background_tasks.add_task(handle_thread_reject, payload, app_auth, bot_name)
             return "processing"
 

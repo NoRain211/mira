@@ -76,7 +76,7 @@ def _comment_payload(body: str, is_pr: bool = True) -> dict:
     return {
         "action": "created",
         "installation": {"id": 1},
-        "comment": {"body": body, "user": {"login": "alice"}},
+        "comment": {"body": body, "user": {"login": "alice"}, "author_association": "OWNER"},
         "issue": issue,
         "repository": {
             "owner": {"login": "testowner"},
@@ -255,6 +255,7 @@ def _review_comment_payload(body: str, user: str = "alice") -> dict:
             "body": body,
             "node_id": "MDI0Ol_abc",
             "user": {"login": user},
+            "author_association": "OWNER",
         },
         "pull_request": {"number": 42},
         "repository": {
@@ -314,6 +315,54 @@ async def test_review_comment_from_bot_self_ignored(client: AsyncClient) -> None
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "ignored"
+
+
+# ── untrusted commenters can't command the bot ───────────────────────────────
+
+
+@pytest.mark.parametrize("association", ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", None])
+@pytest.mark.parametrize("command", ["review", "pause", "why is this slow?"])
+@patch("mira.platforms.github.webhook.handle_pause_resume", new_callable=AsyncMock)
+@patch("mira.platforms.github.webhook.handle_comment", new_callable=AsyncMock)
+async def test_comment_command_from_untrusted_author_ignored(
+    mock_comment: AsyncMock,
+    mock_pause: AsyncMock,
+    command: str,
+    association: str | None,
+    client: AsyncClient,
+) -> None:
+    payload = _comment_payload(f"@{BOT_NAME} {command}")
+    if association is None:
+        del payload["comment"]["author_association"]
+    else:
+        payload["comment"]["author_association"] = association
+    result = await _post(client, "issue_comment", payload)
+    assert result["status"] == "ignored"
+    mock_comment.assert_not_awaited()
+    mock_pause.assert_not_awaited()
+
+
+@pytest.mark.parametrize("association", ["MEMBER", "COLLABORATOR"])
+@patch("mira.platforms.github.webhook.handle_comment", new_callable=AsyncMock)
+async def test_comment_command_from_member_or_collaborator_dispatches(
+    mock_comment: AsyncMock, association: str, client: AsyncClient
+) -> None:
+    payload = _comment_payload(f"@{BOT_NAME} review")
+    payload["comment"]["author_association"] = association
+    result = await _post(client, "issue_comment", payload)
+    assert result["status"] == "processing"
+    mock_comment.assert_awaited_once()
+
+
+@patch("mira.platforms.github.webhook.handle_thread_reject", new_callable=AsyncMock)
+async def test_review_comment_command_from_untrusted_author_ignored(
+    mock_handler: AsyncMock, client: AsyncClient
+) -> None:
+    payload = _review_comment_payload(f"@{BOT_NAME} reject", user="stranger")
+    payload["comment"]["author_association"] = "NONE"
+    result = await _post(client, "pull_request_review_comment", payload)
+    assert result["status"] == "ignored"
+    mock_handler.assert_not_awaited()
 
 
 # ── pause / resume / ignore tests ────────────────────────────────────────────
