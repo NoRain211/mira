@@ -1881,6 +1881,77 @@ class TestRoundDetectionWiring:
         assert "Already-fixed concern" in captured["resolved_threads"][0]["description"]
 
     @pytest.mark.asyncio
+    async def test_forced_review_stays_round_1_despite_threads(self, monkeypatch):
+        """An explicit `@bot review` must review the whole PR and regenerate
+        the walkthrough, even on a PR whose earlier rounds left threads behind.
+        Otherwise a quiet incremental pass posts nothing and the trigger looks
+        ignored."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from mira.core.engine import ReviewEngine
+        from mira.models import BotThreadRecord, PRInfo
+
+        mock_provider = MagicMock()
+        mock_provider.get_pr_info = AsyncMock(
+            return_value=PRInfo(
+                title="t",
+                description="",
+                base_branch="main",
+                head_branch="f",
+                url="https://github.com/o/r/pull/1",
+                number=1,
+                owner="o",
+                repo="r",
+                head_sha="newsha",
+            )
+        )
+        mock_provider.get_pr_diff = AsyncMock(return_value="")
+        mock_provider.get_all_bot_threads = AsyncMock(
+            return_value=[
+                BotThreadRecord(
+                    thread_id="t1",
+                    path="a.py",
+                    line=10,
+                    body="**Open concern**",
+                    is_resolved=False,
+                ),
+            ]
+        )
+        mock_provider.find_bot_comment = AsyncMock(return_value=None)
+        mock_provider.post_comment = AsyncMock()
+        mock_provider.update_comment = AsyncMock()
+        mock_provider.get_compare_diff = AsyncMock()
+        mock_provider.resolve_outdated_review_threads = AsyncMock(return_value=0)
+        mock_provider.start_check_run = AsyncMock(return_value=0)
+        mock_provider.finish_check_run = AsyncMock()
+
+        captured: dict = {}
+
+        async def fake_internal(self, diff_text, **kwargs):
+            captured["review_round"] = kwargs.get("review_round")
+            from mira.models import ReviewResult
+
+            return ReviewResult(comments=[], summary="")
+
+        monkeypatch.setattr(ReviewEngine, "_review_diff_internal", fake_internal)
+
+        engine = ReviewEngine(
+            config=MiraConfig(),
+            llm=AsyncMock(),
+            provider=mock_provider,
+            bot_name="mira",
+        )
+        engine._force_walkthrough = True
+        await engine.review_pr("https://github.com/o/r/pull/1")
+
+        # Full pass, not an incremental follow-up.
+        assert captured["review_round"] == 1
+        mock_provider.get_compare_diff.assert_not_called()
+        assert getattr(engine, "_keep_walkthrough", False) is False
+        # The placeholder is posted so a fresh walkthrough replaces the old one.
+        mock_provider.post_comment.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_review_rest_stays_round_1_despite_threads(self, monkeypatch):
         """review-rest reviews never-seen files, so it stays round 1 (full
         thresholds) even though the first pass left threads behind."""

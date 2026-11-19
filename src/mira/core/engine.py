@@ -659,6 +659,10 @@ class ReviewEngine:
         self.provider = provider
         self.bot_name = bot_name
         self.dry_run = dry_run
+        # An explicit `@bot review` asks for a fresh pass: review the whole PR
+        # diff and regenerate the walkthrough even when earlier rounds already
+        # left threads behind. Automatic incremental reviews leave this off.
+        self._force_walkthrough = False
         # `_jit_needed` (per-PR: index has no summaries for *this PR's* files)
         # is not the same as `_index_was_empty` (whole-repo: no data at all).
         # Only the latter drives the user-visible "your repo isn't indexed" nudge.
@@ -1047,10 +1051,12 @@ class ReviewEngine:
 
         # Review-rest and round 2+ see only part of the PR, so they keep the
         # existing walkthrough instead of replacing it with one for that part.
-        if review_round >= 2:
+        # A forced review covers the whole PR, so it regenerates the walkthrough.
+        if review_round >= 2 and not self._force_walkthrough:
             self._keep_walkthrough = True
+        keep_walkthrough = getattr(self, "_keep_walkthrough", False) and not self._force_walkthrough
         placeholder_id: int | None = None
-        if not self.dry_run and not getattr(self, "_keep_walkthrough", False):
+        if not self.dry_run and not keep_walkthrough:
             try:
                 placeholder_id = await self._post_placeholder_comment(pr_info)
             except Exception as exc:
@@ -1060,7 +1066,7 @@ class ReviewEngine:
         # Overlap detection keeps the full diff — its fingerprint must cover the
         # whole PR, not just the latest commits.
         full_diff_text = diff_text
-        if review_round >= 2 and pr_info.head_sha:
+        if review_round >= 2 and pr_info.head_sha and not self._force_walkthrough:
             try:
                 from mira.dashboard.api import _app_db
 
@@ -1142,7 +1148,7 @@ class ReviewEngine:
                 pr_description=pr_info.description,
                 existing_comments=unresolved_threads or None,
                 on_walkthrough_ready=_on_walkthrough_ready,
-                review_round=review_round,
+                review_round=1 if self._force_walkthrough else review_round,
                 resolved_threads=resolved_thread_dicts or None,
                 team_conventions=team_conventions,
                 walkthrough_diff_text=full_diff_text if incremental_since else None,
@@ -2011,7 +2017,7 @@ class ReviewEngine:
         # Fire walkthrough early so review_pr can post it before chunk review finishes.
         walkthrough_task = _asyncio.create_task(
             _asyncio.sleep(0, result=None)
-            if getattr(self, "_keep_walkthrough", False)
+            if getattr(self, "_keep_walkthrough", False) and not self._force_walkthrough
             else self._generate_walkthrough(walkthrough_files, pr_title, pr_description)
         )
 

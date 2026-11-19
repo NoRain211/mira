@@ -819,7 +819,7 @@ async def test_thread_reply_disagreement_skips_mutations_when_reject_denied():
     store.record_feedback.assert_not_called()
 
 
-# ── Cancellation cleanup ─────────────────────────────────────────────────────
+# ── Explicit review retriggers and cancellation cleanup ──────────────────────
 
 
 def _command_patches(engine: AsyncMock, tracker: MagicMock) -> list:
@@ -837,6 +837,35 @@ def _command_patches(engine: AsyncMock, tracker: MagicMock) -> list:
         patch("mira.platforms.handlers.review_tracker", tracker),
         patch("mira.platforms.handlers.ReviewEngine", return_value=engine),
     ]
+
+
+async def _run_explicit_review(engine: AsyncMock, tracker: MagicMock) -> None:
+    with ExitStack() as stack:
+        for patcher in _command_patches(engine, tracker):
+            stack.enter_context(patcher)
+        tracker.try_start.return_value = True
+        await run_pr_command(
+            MagicMock(),
+            "testowner",
+            "testrepo",
+            42,
+            "https://github.com/testowner/testrepo/pull/42",
+            "review",
+            "alice",
+            "mira-bot",
+            pr_title="Test PR",
+        )
+
+
+async def test_explicit_review_command_forces_full_pass() -> None:
+    """`@bot review` is a fresh full pass, not an automatic incremental round."""
+    engine = AsyncMock()
+    engine.review_pr = AsyncMock(return_value=ReviewResult(summary="ok"))
+    tracker = MagicMock()
+    await _run_explicit_review(engine, tracker)
+
+    assert engine._force_walkthrough is True
+    tracker.complete.assert_called_once_with("testowner/testrepo", 42)
 
 
 async def test_cancelled_review_command_releases_tracker() -> None:

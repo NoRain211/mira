@@ -309,6 +309,12 @@ async def run_pr_command(
             indexing_llm=indexing_llm,
             security_llm=security_llm,
         )
+        # An explicit `@bot review` asks for a fresh pass: review the whole
+        # diff and regenerate the walkthrough. Without this, a PR that already
+        # has bot threads is treated as an automatic incremental round, which
+        # keeps the old walkthrough and posts nothing when it finds no new
+        # comments — the trigger looks ignored.
+        engine._force_walkthrough = True
         if not review_tracker.try_start(repo_full, number, pr_title, pr_url):
             logger.info("Review already in progress for %s, skipping", pr_url)
             return
