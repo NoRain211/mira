@@ -90,6 +90,7 @@ def _audit_drop(c: ReviewComment, stage: str, reason: str = "") -> dict:
         "path": c.path,
         "line": c.line,
         "title": c.title,
+        "body": c.body,
         "severity": c.severity.name,
         "category": c.category,
         "confidence": c.confidence,
@@ -1228,6 +1229,7 @@ class ReviewEngine:
                     len(unanchorable),
                     ", ".join(f"{c.path}:{c.line}" for c in unanchorable),
                 )
+                result.audit.extend(_audit_drop(c, "unanchorable") for c in unanchorable)
                 result.comments = kept
                 if result.key_issues:
                     result.key_issues = _drop_orphan_key_issues(result.key_issues, kept)
@@ -1445,6 +1447,16 @@ class ReviewEngine:
             categories = ",".join(sorted({c.category for c in result.comments if c.category}))
             duration = int((_time.monotonic() - _review_start) * 1000)
             reviewed_paths_json = _json.dumps(result.reviewed_paths or [])
+            # The models are stamped so reviews can be told apart after a model switch.
+            critic = self._critic or self.indexing_llm
+            run = {
+                "stage": "run",
+                "review_model": getattr(getattr(self.llm, "config", None), "model", ""),
+                "critic_model": getattr(getattr(critic, "config", None), "model", ""),
+                "round": review_round,
+                "incremental": bool(incremental_since),
+            }
+            audit_json = _json.dumps([run, *result.audit], default=str)
             review_event = store.record_review(
                 pr_number=pr_info.number,
                 pr_title=pr_info.title,
@@ -1461,6 +1473,7 @@ class ReviewEngine:
                 author=pr_info.author,
                 author_avatar_url=pr_info.author_avatar_url,
                 reviewed_paths=reviewed_paths_json,
+                audit=audit_json,
             )
             # Persist each comment Mira posted so the dashboard can show the
             # actual review conversation, not just aggregate counts.
