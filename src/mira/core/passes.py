@@ -1112,6 +1112,7 @@ async def self_critique(
                     "path": c.path,
                     "line": c.line,
                     "title": c.title,
+                    "body": c.body,
                     "severity": c.severity.name,
                     "category": c.category,
                     "confidence": c.confidence,

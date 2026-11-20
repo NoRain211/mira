@@ -268,3 +268,10 @@ def test_feedback_quality_by_author(store):
         "rejected": 0,
         "human_review": 0,
     }
+
+
+def test_review_audit_is_stored(store, fake_conn):
+    store.record_review(1, "a", "", 0, 0, 0, audit='[{"stage": "run"}]')
+
+    row = fake_conn._conn.execute("SELECT audit FROM review_events").fetchone()
+    assert row == ('[{"stage": "run"}]',)
