@@ -130,6 +130,8 @@ CREATE TABLE IF NOT EXISTS review_events (
     author TEXT NOT NULL DEFAULT '',
     author_avatar_url TEXT NOT NULL DEFAULT '',
     reviewed_paths TEXT NOT NULL DEFAULT '',
+    -- JSON list of what each pipeline stage drafted, dropped and called.
+    audit TEXT NOT NULL DEFAULT '',
     created_at DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 
@@ -364,7 +366,7 @@ def _get_conn(url: str) -> Any:
                 cur.execute(
                     "ALTER TABLE files ADD COLUMN IF NOT EXISTS loc INTEGER NOT NULL DEFAULT 0"
                 )
-                for col in ("author", "author_avatar_url", "reviewed_paths"):
+                for col in ("author", "author_avatar_url", "reviewed_paths", "audit"):
                     cur.execute(
                         f"ALTER TABLE review_events ADD COLUMN IF NOT EXISTS {col} "
                         "TEXT NOT NULL DEFAULT ''"
@@ -1050,6 +1052,7 @@ class PgIndexStore(_StoreSharedMixin):
         author: str = "",
         author_avatar_url: str = "",
         reviewed_paths: str = "",
+        audit: str = "",
     ) -> ReviewEvent:
         now = created_at if created_at is not None else time.time()
         with self._cursor() as cur:
@@ -1057,8 +1060,9 @@ class PgIndexStore(_StoreSharedMixin):
                 "INSERT INTO review_events (owner, repo, pr_number, pr_title, pr_url, "
                 "comments_posted, blockers, warnings, suggestions, files_reviewed, "
                 "lines_changed, tokens_used, duration_ms, categories, author, "
-                "author_avatar_url, reviewed_paths, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "author_avatar_url, reviewed_paths, audit, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                "%s, %s) "
                 "RETURNING id",
                 (
                     self._owner,
@@ -1078,6 +1082,7 @@ class PgIndexStore(_StoreSharedMixin):
                     author,
                     author_avatar_url,
                     reviewed_paths,
+                    audit,
                     now,
                 ),
             )

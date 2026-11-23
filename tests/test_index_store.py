@@ -285,3 +285,19 @@ class TestIndexStoreOpen:
         store2 = IndexStore.open("testowner", "testrepo")
         assert store2.get_summary("test.py") is not None
         store2.close()
+
+
+def test_review_audit_is_stored_and_added_to_an_older_database(tmp_path):
+    db_path = str(tmp_path / "audit.db")
+    old = IndexStore(db_path)
+    old._conn.execute("ALTER TABLE review_events DROP COLUMN audit")
+    old._conn.commit()
+    old.close()
+
+    store = IndexStore(db_path)
+    try:
+        store.record_review(1, "Synthetic review", "", 0, 0, 0, audit='[{"stage": "run"}]')
+        row = store._conn.execute("SELECT audit FROM review_events").fetchone()
+    finally:
+        store.close()
+    assert row == ('[{"stage": "run"}]',)

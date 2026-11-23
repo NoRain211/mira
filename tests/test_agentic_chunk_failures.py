@@ -12,6 +12,7 @@ from mira.core import engine as engine_mod
 from mira.core.engine import ReviewEngine, _response_excerpt
 from mira.core.passes import AgenticLoopResult, agentic_review_loop
 from mira.exceptions import StructuredOutputError
+from mira.index.store import IndexStore
 from mira.llm.base import _retriable
 from mira.llm.provider import LLMProvider
 from mira.llm.tool_schemas import SUBMIT_REVIEW_TOOL
@@ -415,6 +416,60 @@ async def test_failed_paths_are_retryable_through_review_rest(monkeypatch, tmp_p
     assert "src/bad.py" in progress.skipped_paths
     assert "src/bad.py" not in progress.reviewed_paths
     assert "src/good.py" in progress.reviewed_paths
+
+
+@pytest.mark.asyncio
+async def test_review_stores_its_audit_with_a_run_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("MIRA_INDEX_DIR", str(tmp_path))
+    _force_one_chunk_per_file(monkeypatch)
+    llm = _ReviewLLM({"src/bad.py"})
+    llm.config = MagicMock(model="review-model")
+    engine = _engine(llm)
+    engine._agentic_source_fetcher = _FakeFetcher()
+    engine._agentic_repo_tree = ["src/good.py", "src/bad.py"]
+
+    mock_db = MagicMock()
+    mock_db.get_last_reviewed_sha.return_value = ""
+    mock_db.get_repo.return_value = None
+    mock_db.get_pr_review_progress.return_value = None
+    monkeypatch.setattr("mira.dashboard.api._app_db", mock_db)
+
+    provider = AsyncMock()
+    provider.get_pr_info.return_value = PRInfo(
+        title="Test",
+        description="",
+        base_branch="main",
+        head_branch="feature",
+        url="https://github.com/test/repo/pull/1",
+        number=1,
+        owner="test",
+        repo="repo",
+    )
+    provider.get_pr_diff.return_value = _diff("src/good.py", "src/bad.py")
+    provider.get_all_bot_threads.return_value = []
+    provider.get_unresolved_bot_threads.return_value = []
+    provider.get_file_history.return_value = {}
+    provider.get_repo_tree.return_value = ["src/good.py", "src/bad.py"]
+    provider.find_bot_comment = AsyncMock(return_value=None)
+    engine.provider = provider
+    engine.dry_run = True
+
+    await engine.review_pr("https://github.com/test/repo/pull/1")
+
+    store = IndexStore.open("test", "repo")
+    try:
+        (stored,) = store._conn.execute("SELECT audit FROM review_events").fetchone()
+    finally:
+        store.close()
+    audit = json.loads(stored)
+    assert audit[0]["stage"] == "run"
+    assert audit[0]["round"] == 1
+    assert audit[0]["incremental"] is False
+    assert audit[0]["review_model"] == "review-model"
+    # Self-critique is off, so no critic ran and none is named.
+    assert audit[0]["critic_model"] == ""
+    failed = [e for e in audit if e["stage"] == "chunk_failed"]
+    assert [e["paths"] for e in failed] == [["src/bad.py"]]
 
 
 @pytest.mark.asyncio
