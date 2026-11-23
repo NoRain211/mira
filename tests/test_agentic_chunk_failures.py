@@ -422,7 +422,9 @@ async def test_failed_paths_are_retryable_through_review_rest(monkeypatch, tmp_p
 async def test_review_stores_its_audit_with_a_run_entry(monkeypatch, tmp_path):
     monkeypatch.setenv("MIRA_INDEX_DIR", str(tmp_path))
     _force_one_chunk_per_file(monkeypatch)
-    engine = _engine(_ReviewLLM({"src/bad.py"}))
+    llm = _ReviewLLM({"src/bad.py"})
+    llm.config = MagicMock(model="review-model")
+    engine = _engine(llm)
     engine._agentic_source_fetcher = _FakeFetcher()
     engine._agentic_repo_tree = ["src/good.py", "src/bad.py"]
 
@@ -463,6 +465,9 @@ async def test_review_stores_its_audit_with_a_run_entry(monkeypatch, tmp_path):
     assert audit[0]["stage"] == "run"
     assert audit[0]["round"] == 1
     assert audit[0]["incremental"] is False
+    assert audit[0]["review_model"] == "review-model"
+    # Self-critique is off, so no critic ran and none is named.
+    assert audit[0]["critic_model"] == ""
     failed = [e for e in audit if e["stage"] == "chunk_failed"]
     assert [e["paths"] for e in failed] == [["src/bad.py"]]
 

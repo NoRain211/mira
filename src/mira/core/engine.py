@@ -1448,11 +1448,11 @@ class ReviewEngine:
             duration = int((_time.monotonic() - _review_start) * 1000)
             reviewed_paths_json = _json.dumps(result.reviewed_paths or [])
             # The models are stamped so reviews can be told apart after a model switch.
-            critic = self._critic or self.indexing_llm
+            # The engine is built per review, so _critic is set only if the critic ran.
             run = {
                 "stage": "run",
                 "review_model": getattr(getattr(self.llm, "config", None), "model", ""),
-                "critic_model": getattr(getattr(critic, "config", None), "model", ""),
+                "critic_model": getattr(getattr(self._critic, "config", None), "model", ""),
                 "round": review_round,
                 "incremental": bool(incremental_since),
             }
